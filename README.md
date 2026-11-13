@@ -10,7 +10,7 @@ Chrome extension (MV3, WXT + React) that measures element size and spacing on an
 | `pnpm dev` | Watch + rebuild into `.output/chrome-mv3-dev` (dev server on :4320). Load that folder once via Load unpacked; it reloads itself on save |
 | `pnpm build` | Production build in `.output/chrome-mv3` |
 | `pnpm test` | Vitest for `src/core` |
-| `pnpm e2e` | Build, load `.output/chrome-mv3` into headless Chrome for Testing, check the manifest (only `activeTab` + `scripting`, icons 16–128), click the toolbar icon over CDP: overlay + badge on → off → on, then measure lock (`L` + click + hover, Esc, typing/IME, reset on off) the Alt-hold chip, then selection navigation (Tab / Enter keys, Shift+click multi-select + union outline, keys ignored while typing), then the gap labels of the flex-wrap / flex-column / grid fixtures, then Blueprint (`#bp-card` boxes, radius `r 20` / `r 16` / `r 24/20`, `B` / `Esc`, and `#bp-many`: 400-box cap, `+81 hidden`, frame time while scrolling), then Copy (`C` / `J` / `P` read back from the clipboard, the copied selector finds the element again, `navigator.clipboard` fallback when the page swallows `copy`, the same on an insecure `http://uim.test` origin, error toast when the page swallows `copy`). Needs Chrome for Testing in `~/.cache/puppeteer` (`npx @puppeteer/browsers install chrome@stable --path ~/.cache/puppeteer`) or `CHROME_PATH` |
+| `pnpm e2e` | Build, load `.output/chrome-mv3` into headless Chrome for Testing, check the manifest (`activeTab` + `scripting` + `contextMenus`, hosts only as optional, icons 16–128), click the toolbar icon over CDP: overlay + badge on → off → on, then measure lock (`L` + click + hover, Esc, typing/IME, reset on off) the Alt-hold chip, then selection navigation (Tab / Enter keys, Shift+click multi-select + union outline, keys ignored while typing), then the gap labels of the flex-wrap / flex-column / grid fixtures, then Blueprint (`#bp-card` boxes, radius `r 20` / `r 16` / `r 24/20`, `B` / `Esc`, and `#bp-many`: 400-box cap, `+81 hidden`, frame time while scrolling), then Copy (`C` / `J` / `P` read back from the clipboard, the copied selector finds the element again, `navigator.clipboard` fallback when the page swallows `copy`, the same on an insecure `http://uim.test` origin, error toast when the page swallows `copy`), then the hover bands of an element in a `scale(0.5)` parent, then a dialog and a popover opened while ON (overlay re-promoted above them in the top layer, hover measures inside), then iframes (srcdoc + same-origin frames on / off with the top, cross-origin one off with a toast naming its host, hover / select / Alt-measure / Esc inside a frame, Esc in a frame turns every frame off; a copy of the build with `http://localhost/*` granted measures inside the cross-origin frame; the permission prompt itself can't be answered headless). Needs Chrome for Testing in `~/.cache/puppeteer` (`npx @puppeteer/browsers install chrome@stable --path ~/.cache/puppeteer`) or `CHROME_PATH` |
 | `pnpm typecheck` / `pnpm lint` | tsc / oxlint |
 
 ## Load in Chrome
@@ -29,6 +29,7 @@ Chrome extension (MV3, WXT + React) that measures element size and spacing on an
 - `C` / `J` / `P` with a selection: copy the last-selected element's spec (selector, border-box size, padding, border, radius) as CSS, JSON or a Markdown prompt for an AI agent; toast `Copied CSS` or why it failed. Works on http pages too (copy command, no extra permission). Ignored while typing; Cmd/Ctrl+C stay with the page.
 - `L`: measure lock, the same as holding Alt until pressed again. Chip `⌥ lock (L)` while on. Ignored while typing in the page.
 - `Esc`: leave Blueprint, then clear selection, then turn off (lock stays until the tool turns off).
+- Iframes: turning on reaches the top frame and every same-origin / srcdoc frame; each frame draws its own overlay with its own selection (no measuring between frames). Keys go to the frame you last clicked; Esc there clears its selection, then turns every frame off. Cross-origin frames need access: a toast names their hosts, right-click the icon → **Measure cross-origin frames** and allow in Chrome's prompt (asks for those hosts only, remembered by Chrome). Frames added after turning on join at the next turn-on.
 
 ## Layout
 
@@ -48,11 +49,12 @@ public/icon/    toolbar + store icons, rendered from docs/icon.svg (16/32/48 as 
 3. Hold Alt, Alt+Tab away, come back: no stuck measuring chip.
 4. Focus the input, press Alt / letters (`L` too) / Enter / Tab: typing and focus move still work, lock chip and selection do not change; `Esc` still exits.
 5. Select inside the scroll container, scroll: outline follows. Sticky header measures correctly.
-6. Open the dialog, then turn ON: overlay draws above the dialog.
-7. `chrome://extensions` tab: badge shows `!`. Navigate a tab that was ON: badge clears.
-8. `chrome://extensions/shortcuts`: `Alt+Shift+M` is bound (another extension may hold it).
-9. Blue icon (not a letter) in the toolbar, extensions menu and `chrome://extensions`, readable in light and dark theme; red `ON` badge sits on it.
-10. Select an element, press `C`, `J`, `P` and paste each into an editor, on an https page and a plain-http one: CSS / JSON / Markdown with a selector that finds the element in DevTools.
+6. Iframes: turn ON on the playground: the srcdoc and same-origin frames hover / select, the toast names `127.0.0.1` (or `localhost`); right-click the icon → Measure cross-origin frames, allow: the third frame measures too. Esc inside a frame, then again: every frame turns off.
+7. Top layer: open the dialog, then turn ON: overlay draws above it. Then click "Open dialog in 2 s" (and "Open popover in 2 s") and turn ON right away: when it opens, the overlay still draws above it.
+8. `chrome://extensions` tab: badge shows `!`. Navigate a tab that was ON: badge clears.
+9. `chrome://extensions/shortcuts`: `Alt+Shift+M` is bound (another extension may hold it).
+10. Blue icon (not a letter) in the toolbar, extensions menu and `chrome://extensions`, readable in light and dark theme; red `ON` badge sits on it.
+11. Select an element, press `C`, `J`, `P` and paste each into an editor, on an https page and a plain-http one: CSS / JSON / Markdown with a selector that finds the element in DevTools.
 
 ## Progress
 
@@ -69,9 +71,9 @@ Spec: [docs/spec.md](docs/spec.md). One ticket per file in `.scratch/ui-measure/
 | 06 | Label collision | 05 | done |
 | 07 | Blueprint view | 05, 06 | done |
 | 08 | Copy spec (CSS / JSON / agent prompt) | 01 | done |
-| 09 | Overlay stays on top + scaled box model | 01 | ready |
-| 10 | Measure inside iframes | 01 | ready |
-| 11 | Closed shadow roots + CSS zoom | 01 | ready |
+| 09 | Overlay stays on top + scaled box model | 01 | done |
+| 10 | Measure inside iframes | 01 | done (cross-origin prompt: checklist 6) |
+| 11 | Closed shadow roots + CSS zoom | 01 | done |
 | 12 | Publish to the Chrome Web Store | 01, 02 | ready |
 | 13 | Smooth motion for hover/selection boxes | 01 | ready |
 

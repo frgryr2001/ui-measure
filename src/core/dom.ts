@@ -1,9 +1,12 @@
-import { classify, radii, type Corners, type Look } from './blueprint';
+import { classify, radii, type Corner, type Corners, type Look } from './blueprint';
 import { gaps, type Gap } from './gap';
-import { height, inset, width, type Edges, type Rect } from './rect';
+import { height, inset, scaleEdges, scaleOf, width, type Edges, type Rect } from './rect';
 import { selectorOf, type Spec, type Step } from './spec';
 
 export type Boxes = { margin: Rect; border: Rect; padding: Rect; content: Rect };
+
+/** An element's shadow root; the content script passes one that reaches closed roots too (`chrome.dom.openOrClosedShadowRoot`). */
+export type ShadowOf = (el: Element) => ShadowRoot | null;
 
 const px = (v: string) => parseFloat(v) || 0;
 
@@ -19,48 +22,52 @@ export const bounds = (el: Element): Rect => {
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
 };
 
-/** Box model in viewport px. Bounds come from the rendered rect, edges from computed style. */
+/**
+ * Box model in viewport px. Bounds come from the rendered rect, edges from computed style, scaled
+ * like the rect by any transform: scale() on the element or its ancestors.
+ */
 export function readBoxes(el: Element): Boxes {
   const border = bounds(el);
   const cs = getComputedStyle(el);
-  // shortcut: computed padding/margin ignore ancestor transform: scale(), so bands drift on scaled
-  // elements; multiply by rect.width / offsetWidth if that matters.
-  const padding = inset(border, edges(cs, 'border', '-width'));
+  // shortcut: SVG / MathML have no offsetWidth, so their bands stay unscaled, and rotate() / skew() grow the rect and read as scale; use getBoxQuads() or the transform matrix if those pages matter.
+  const [sx, sy] = el instanceof HTMLElement ? [scaleOf(width(border), el.offsetWidth), scaleOf(height(border), el.offsetHeight)] : [1, 1];
+  const scaled = (prefix: string, suffix?: string) => scaleEdges(edges(cs, prefix, suffix), sx, sy);
+  const padding = inset(border, scaled('border', '-width'));
   return {
     border,
     padding,
-    content: inset(padding, edges(cs, 'padding')),
-    margin: inset(border, edges(cs, 'margin'), -1),
+    content: inset(padding, scaled('padding')),
+    margin: inset(border, scaled('margin'), -1),
   };
 }
 
-/** Deepest element at a viewport point, walking into open shadow roots. */
-export function deepElementAt(x: number, y: number, ignore: Element): Element | null {
+/** Deepest element at a viewport point, walking into shadow roots. */
+export function deepElementAt(x: number, y: number, ignore: Element, shadowOf: ShadowOf): Element | null {
   let el = document.elementFromPoint(x, y);
-  while (el?.shadowRoot) {
-    const inner = el.shadowRoot.elementFromPoint(x, y);
+  for (let root = el && shadowOf(el); root; root = el && shadowOf(el)) {
+    const inner = root.elementFromPoint(x, y);
     if (!inner || inner === el) break;
     el = inner;
   }
   return el === ignore ? null : el;
 }
 
-/** Parent element, stepping out of an open shadow root to its host. */
+/** Parent element, stepping out of a shadow root to its host. */
 export const parentOf = (el: Element): Element | null =>
   el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
 
 // shortcut: follows the DOM, not the flat tree, so `<slot>`ed and `display:contents` children are
 // unreachable by Enter and Tab and their gaps are not drawn; walk assignedElements() / grandchildren if web-component pages need it.
-/** Children that render a box, read from the open shadow root when there is one (like hit testing). */
-export const childrenOf = (el: Element, ignore: Element): Element[] =>
-  [...(el.shadowRoot ?? el).children].filter((c) => c !== ignore && c.getClientRects().length > 0);
+/** Children that render a box, read from the shadow root when there is one (like hit testing). */
+export const childrenOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
+  [...(shadowOf(el) ?? el).children].filter((c) => c !== ignore && c.getClientRects().length > 0);
 
 /** Gaps between the in-flow children of a flex or grid container; none for other elements. */
-export function readGaps(el: Element, ignore: Element): Gap[] {
+export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf): Gap[] {
   const cs = getComputedStyle(el);
   const flex = cs.display.includes('flex');
   if (!flex && !cs.display.includes('grid')) return [];
-  const items = childrenOf(el, ignore)
+  const items = childrenOf(el, ignore, shadowOf)
     .filter((c) => !['absolute', 'fixed'].includes(getComputedStyle(c).position))
     .map(bounds);
   // shortcut: assumes horizontal writing-mode; swap the axes once vertical-rl / vertical-lr pages need gaps.
@@ -80,38 +87,65 @@ export function lookAt(el: Element): Look {
 
 /**
  * Children the blueprint walks: every child, not only rendered ones, so `display:contents` ones are
- * reached. A shadow host gives its open shadow root's children, then its light children (slotted
+ * reached. A shadow host gives its shadow root's children, then its light children (slotted
  * ones render, the rest have no box). An <svg> is a leaf.
  */
-export const blueprintKids = (el: Element, ignore: Element): Element[] =>
-  el instanceof SVGElement ? [] : [...(el.shadowRoot?.children ?? []), ...el.children].filter((c) => c !== ignore);
+export const blueprintKids = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
+  el instanceof SVGElement ? [] : [...(shadowOf(el)?.children ?? []), ...el.children].filter((c) => c !== ignore);
 
-/** Clamped corner radii of `el`, whose bounds are `b`. */
-export function readRadii(el: Element, b: Rect): Corners {
+/**
+ * Effective CSS `zoom` (`currentCSSZoom`) of the nearest element containing all of `els` (each counts
+ * as containing itself): labels divide by it to show CSS px. 1 for none, so browser zoom is never in it.
+ */
+export function zoomOf(els: Element[]): number {
+  const chain = (el: Element) => {
+    const up: Element[] = [];
+    for (let e: Element | null = el; e; e = parentOf(e)) up.push(e);
+    return up;
+  };
+  const [first, ...rest] = els;
+  if (first && rest.length === 0) return first.currentCSSZoom;
+  const others = rest.map((el) => new Set(chain(el)));
+  // a box-less ancestor (display:contents, <slot>) reports zoom 1, so the first one with a box counts
+  const common = first && chain(first).find((a) => others.every((up) => up.has(a)) && a.getClientRects().length > 0);
+  return common ? common.currentCSSZoom : 1;
+}
+
+// computed radii are CSS px, the bounds are zoomed: % resolve against the CSS size, as layout does
+const cssRadii = (el: Element, b: Rect, z: number): Corners => {
   const cs = getComputedStyle(el);
-  return radii([radius(cs, 'top-left'), radius(cs, 'top-right'), radius(cs, 'bottom-right'), radius(cs, 'bottom-left')], width(b), height(b));
+  return radii([radius(cs, 'top-left'), radius(cs, 'top-right'), radius(cs, 'bottom-right'), radius(cs, 'bottom-left')], width(b) / z, height(b) / z);
+};
+
+/** Clamped corner radii of `el`, whose bounds are `b`, in viewport px like `b` (scaled by CSS `zoom`). */
+export function readRadii(el: Element, b: Rect): Corners {
+  const z = el.currentCSSZoom;
+  const [tl, tr, br, bl] = cssRadii(el, b, z);
+  const zoomed = ([x, y]: Corner): Corner => [x * z, y * z];
+  return [zoomed(tl), zoomed(tr), zoomed(br), zoomed(bl)];
 }
 
 /** Next (`step` 1) or previous (-1) rendered sibling, wrapping around; null when there is none. */
-export function siblingOf(el: Element, step: 1 | -1, ignore: Element): Element | null {
+export function siblingOf(el: Element, step: 1 | -1, ignore: Element, shadowOf: ShadowOf): Element | null {
   const parent = parentOf(el);
-  const siblings = parent ? childrenOf(parent, ignore) : [];
+  const siblings = parent ? childrenOf(parent, ignore, shadowOf) : [];
   const i = siblings.indexOf(el);
   return i < 0 ? null : (siblings[(i + step + siblings.length) % siblings.length] ?? null);
 }
 
 /** True when keyboard focus is in an editable field of the page (not our own UI). */
-export function isTypingInPage(ignore: Element): boolean {
+export function isTypingInPage(ignore: Element, shadowOf: ShadowOf): boolean {
   let el = document.activeElement;
-  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  for (let root = el && shadowOf(el); root?.activeElement; root = shadowOf(el)) el = root.activeElement;
   if (!el || el === ignore) return false;
   if (el instanceof HTMLElement && el.isContentEditable) return true;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
 }
 
-/** What Copy writes out for `el`: its bounds, padding, border, radius and a selector to find it again. */
+/** What Copy writes out for `el`: its bounds, padding, border, radius and a selector to find it again, in CSS px under CSS `zoom`. */
 export function readSpec(el: Element): Spec {
   const b = bounds(el);
+  const z = el.currentCSSZoom;
   const cs = getComputedStyle(el);
   const border = edges(cs, 'border', '-width');
   // shortcut: one style and color for the whole border (the first drawn side); emit per-side longhands if mixed borders matter.
@@ -128,10 +162,10 @@ export function readSpec(el: Element): Spec {
   return {
     selector: selectorOf(chain),
     name: el.localName + [...el.classList].map((c) => `.${c}`).join(''),
-    width: width(b),
-    height: height(b),
+    width: width(b) / z,
+    height: height(b) / z,
     padding: edges(cs, 'padding'),
     border: { width: border, style: cs.getPropertyValue(`border-${side}-style`), color: cs.getPropertyValue(`border-${side}-color`) },
-    radius: readRadii(el, b),
+    radius: cssRadii(el, b, z),
   };
 }

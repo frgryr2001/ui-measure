@@ -6,8 +6,9 @@ export default defineConfig({
   manifest: {
     name: 'UI Measure',
     description: 'Measure size and spacing of elements on any web page',
-    // activeTab + scripting: no install-time warning, inject only when the user turns it on
-    permissions: ['activeTab', 'scripting'],
+    // none warns at install: activeTab + scripting inject on turn-on; cross-origin frames ask for their host from the icon's menu
+    permissions: ['activeTab', 'scripting', 'contextMenus'],
+    optional_host_permissions: ['<all_urls>'],
     // no default_popup, otherwise action.onClicked never fires
     action: { default_title: 'UI Measure: OFF (Alt+Shift+M)' },
     commands: {

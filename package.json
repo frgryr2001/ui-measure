@@ -12,7 +12,7 @@
     "e2e": "wxt build && node e2e/smoke.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
-    "playground": "vite playground --port 4319 --strictPort",
+    "playground": "vite playground --host 127.0.0.1 --port 4319 --strictPort",
     "postinstall": "wxt prepare"
   },
   "dependencies": {

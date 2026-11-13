@@ -1,5 +1,5 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, childrenOf, deepElementAt, isTypingInPage, lookAt, parentOf, readBoxes, readGaps, readRadii, readSpec, siblingOf, type Boxes } from '../core/dom';
+import { blueprintKids, bounds, childrenOf, deepElementAt, isTypingInPage, lookAt, parentOf, readBoxes, readGaps, readRadii, readSpec, siblingOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { LABEL_H, labelWidth, lineSpots, placeLabels, sizeSpots, type Anchors, type Label } from '../core/labels';
 import { EPSILON, measure, mid, type Measurement } from '../core/measure';
@@ -51,6 +51,7 @@ const COPY_KEYS = new Map<string, { format: Format; toast: string }>([
   ['KeyP', { format: 'prompt', toast: 'Copied prompt' }],
 ]);
 const TOAST_MS = 1500;
+const NOTICE_MS = 6000;
 
 // a letter shortcut: first press, no modifier, so Cmd/Ctrl+C and friends stay with the page
 const isBareKeydown = (e: KeyboardEvent) => e.type === 'keydown' && !e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
@@ -61,13 +62,15 @@ const BLOCKED = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'd
 /**
  * Tracks pointer, Alt and selection, and re-reads geometry every animation frame while on,
  * so scroll, sticky elements, transitions and DOM changes need no separate observers.
- * Returns a stop function that removes every listener.
+ * `stop` removes every listener; `notify` shows a message toast for a few seconds.
+ * Label numbers are CSS px: viewport px over the CSS `zoom` of what they describe (rects stay viewport px).
  */
-export function startController({ host, onFrame, onExit }: {
+export function startController({ host, shadowOf, onFrame, onExit }: {
   host: Element;
+  shadowOf: ShadowOf;
   onFrame: (frame: Frame) => void;
   onExit: () => void;
-}): () => void {
+}): { stop: () => void; notify: (text: string) => void } {
   let pointer: { x: number; y: number } | null = null;
   let alt = false;
   let locked = false;
@@ -106,7 +109,9 @@ export function startController({ host, onFrame, onExit }: {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (type === 'pointerdown' && e instanceof PointerEvent && e.button === 0) {
-        const el = deepElementAt(e.clientX, e.clientY, host);
+        // blocking mousedown also blocks the focus move into this frame, and keys would go to the frame focused before
+        window.focus();
+        const el = deepElementAt(e.clientX, e.clientY, host, shadowOf);
         if (!e.shiftKey) selected = el ? [el] : [];
         else if (el) selected = selected.includes(el) ? selected.filter((s) => s !== el) : [...selected, el];
       }
@@ -118,19 +123,19 @@ export function startController({ host, onFrame, onExit }: {
     if (e.key === 'Alt') {
       alt = e.type === 'keydown';
       // stops Windows Chrome / Firefox from focusing the browser menu
-      if (!isTypingInPage(host)) e.preventDefault();
+      if (!isTypingInPage(host, shadowOf)) e.preventDefault();
       return;
     }
     // `code`, not `key`: a Cyrillic layout reports `д` for this key
     if (e.code === 'KeyL' && isBareKeydown(e)) {
-      if (isTypingInPage(host)) return;
+      if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       locked = !locked;
       return;
     }
     if (e.code === 'KeyB' && selected.length > 0 && isBareKeydown(e)) {
-      if (isTypingInPage(host)) return;
+      if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       blueprint = !blueprint;
@@ -140,7 +145,7 @@ export function startController({ host, onFrame, onExit }: {
     const from = selected.at(-1);
     const copy = COPY_KEYS.get(e.code);
     if (copy && from && isBareKeydown(e)) {
-      if (isTypingInPage(host)) return;
+      if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       // synchronously inside the keydown: the clipboard needs its user activation
@@ -151,15 +156,15 @@ export function startController({ host, onFrame, onExit }: {
     }
     // Shift+Enter parent, Enter first child, (Shift+)Tab siblings; without a selection the page keeps Tab
     if (from && (e.key === 'Enter' || e.key === 'Tab') && e.type === 'keydown' && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      if (isTypingInPage(host)) return;
+      if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const next =
         e.key === 'Tab'
-          ? siblingOf(from, e.shiftKey ? -1 : 1, host)
+          ? siblingOf(from, e.shiftKey ? -1 : 1, host, shadowOf)
           : e.shiftKey
             ? parentOf(from)
-            : (childrenOf(from, host)[0] ?? null);
+            : (childrenOf(from, host, shadowOf)[0] ?? null);
       if (next) selected = [next];
       return;
     }
@@ -186,7 +191,7 @@ export function startController({ host, onFrame, onExit }: {
     selected = selected.filter((el) => el.isConnected);
     if (selected.length === 0) blueprint = false;
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-    const target = pointer ? deepElementAt(pointer.x, pointer.y, host) : null;
+    const target = pointer ? deepElementAt(pointer.x, pointer.y, host, shadowOf) : null;
     const selectedRects = selected.map(bounds);
     const selRect = union(selectedRects);
     const hover = target ? readBoxes(target) : null;
@@ -194,14 +199,14 @@ export function startController({ host, onFrame, onExit }: {
     const measurement = measuring && hover && target && !selected.includes(target) ? measure(selRect, hover.border) : null;
     // re-collected every frame like everything else, so scrolling reveals what the viewport cut
     const root = blueprint && !measuring ? selected.at(-1) : undefined;
-    const bp = root ? collect(root, (el) => blueprintKids(el, host), lookAt, viewport) : null;
+    const bp = root ? collect(root, (el) => blueprintKids(el, host, shadowOf), lookAt, viewport) : null;
     const kept = (bp?.nodes ?? []).map((k) => ({ ...k, boxes: readBoxes(k.node) }));
     const inBlueprint = new Set(kept.map((k) => k.node));
     // the hover target keeps its own size and gap labels (they outrank blueprint ones), so blueprint skips them
     const gapsOf = (measuring ? [] : [...new Set(target ? [...selected, target] : selected)])
       .filter((el) => el === target || !inBlueprint.has(el))
-      .map((el) => ({ el, gaps: readGaps(el, host) }));
-    const blueprintGaps = kept.filter((k) => k.node !== target).map((k) => ({ el: k.node, gaps: readGaps(k.node, host) }));
+      .map((el) => ({ el, gaps: readGaps(el, host, shadowOf) }));
+    const blueprintGaps = kept.filter((k) => k.node !== target).map((k) => ({ el: k.node, gaps: readGaps(k.node, host, shadowOf) }));
     const corners = kept.map((k) => ({ el: k.node, box: k.boxes.border, radii: readRadii(k.node, k.boxes.border) }));
 
     const labels: (Label & { kind: LabelKind })[] = [];
@@ -216,19 +221,21 @@ export function startController({ host, onFrame, onExit }: {
     }
     if (measurement && target) {
       const key = `m:${selected.map(idOf).join()}>${idOf(target)}`;
-      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value), 'measure', PRIORITY.measure, (t) => lineSpots(s, t)));
+      const z = zoomOf([...selected, target]);
+      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / z), 'measure', PRIORITY.measure, (t) => lineSpots(s, t)));
     }
     // sizes are hidden while measuring: they sit where the vertical spacing label usually goes
     if (selRect && !measuring) {
-      add(`sel:${selected.map(idOf).join()}`, sizeLabel(selRect), 'size', PRIORITY.selection, (t) => sizeSpots(selRect, t));
+      add(`sel:${selected.map(idOf).join()}`, sizeLabel(selRect, zoomOf(selected)), 'size', PRIORITY.selection, (t) => sizeSpots(selRect, t));
     }
     // hovering the one selected element would repeat its size label
     if (hover && target && !measuring && !(selected.length === 1 && selected[0] === target)) {
-      add(`size:${idOf(target)}`, sizeLabel(hover.border), 'size', PRIORITY.hoverSize, (t) => sizeSpots(hover.border, t));
+      add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots(hover.border, t));
     }
     for (const { el, gaps } of gapsOf) {
       const priority = el === target ? PRIORITY.hoverGap : PRIORITY.gap;
-      gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value), 'gap', priority, (t) => lineSpots(g, t)));
+      const z = zoomOf([el]);
+      gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', priority, (t) => lineSpots(g, t)));
     }
     if (bp && root) {
       const r = bounds(root);
@@ -241,11 +248,12 @@ export function startController({ host, onFrame, onExit }: {
       const area = width(viewport) * height(viewport);
       for (const { node, boxes } of kept) {
         const id = idOf(node);
+        const z = zoomOf([node]);
         const b = boxes.border;
         // a hovered node's labels come back first, like its hover size (ticket 06)
         const boost = node === target ? BLUEPRINT.hoverBoost : 0;
         if (node !== root && node !== target) {
-          add(`size:${id}`, sizeLabel(b), 'size', BLUEPRINT.size + BLUEPRINT.sizeByArea * Math.min(1, (width(b) * height(b)) / area), (t) => sizeSpots(b, t));
+          add(`size:${id}`, sizeLabel(b, z), 'size', BLUEPRINT.size + BLUEPRINT.sizeByArea * Math.min(1, (width(b) * height(b)) / area), (t) => sizeSpots(b, t));
         }
         const p = boxes.padding;
         const c = boxes.content;
@@ -256,15 +264,16 @@ export function startController({ host, onFrame, onExit }: {
           [c.left - p.left, mid(p.left, c.left), mid(p.top, p.bottom)],
         ] as const;
         sides.forEach(([value, x, y], i) => {
-          if (value > EPSILON) add(`pad:${id}:${i}`, formatPx(value), 'padding', boost + (node === root ? BLUEPRINT.rootPadding : BLUEPRINT.padding), () => [{ x, y }]);
+          if (value > EPSILON) add(`pad:${id}:${i}`, formatPx(value / z), 'padding', boost + (node === root ? BLUEPRINT.rootPadding : BLUEPRINT.padding), () => [{ x, y }]);
         });
       }
       for (const { el, gaps } of blueprintGaps) {
-        gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value), 'gap', BLUEPRINT.gap, (t) => lineSpots(g, t)));
+        const z = zoomOf([el]);
+        gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', BLUEPRINT.gap, (t) => lineSpots(g, t)));
       }
       for (const { el, box, radii } of corners) {
         const boost = el === target ? BLUEPRINT.hoverBoost : 0;
-        radiusLabels(box, radii).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'size', boost + BLUEPRINT.radius, () => l.at));
+        radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'size', boost + BLUEPRINT.radius, () => l.at));
       }
     }
     const placed = placeLabels(labels, viewport, anchors);
@@ -292,8 +301,13 @@ export function startController({ host, onFrame, onExit }: {
   };
   raf = requestAnimationFrame(tick);
 
-  return () => {
-    ac.abort();
-    cancelAnimationFrame(raf);
+  return {
+    stop: () => {
+      ac.abort();
+      cancelAnimationFrame(raf);
+    },
+    notify: (text) => {
+      toast = { text, ok: true, until: performance.now() + NOTICE_MS };
+    },
   };
 }

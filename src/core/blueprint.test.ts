@@ -149,6 +149,12 @@ describe('radiusLabels', () => {
     expect(texts([[8, 8], [8, 8], [0.5, 0.5], [100, 50]])).toEqual(['r 8', 'r 8', 'r 100/50']);
   });
 
+  it('under CSS zoom the text is the CSS radius, the spots stay on the rendered corner', () => {
+    const zoomed = radiusLabels(b, [[18, 18], [18, 18], [18, 18], [18, 18]], 1.5);
+    expect(zoomed.map((l) => l.text)).toEqual(['r 12']);
+    expect(zoomed[0]?.at[0]?.y).toBeGreaterThan(radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]])[0]?.at[0]?.y ?? Infinity);
+  });
+
   it('no rounded corner: no label', () => {
     expect(texts([[0, 0], [0, 0], [0, 0], [0.9, 4]])).toEqual([]);
   });

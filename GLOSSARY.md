@@ -6,11 +6,14 @@ The tool's ON state, scoped to one browser tab. Off by default; turning it on or
 **Bounds**
 The outer edge of an element's visible box (its border edge, after transforms). Every measurement is taken between bounds, never between padding or content edges.
 
+**CSS px**
+The unit of every number the tool shows: the px you write in CSS. Browser zoom needs no correction (the page APIs already report CSS px). Inside CSS `zoom` a number is the rendered distance divided by the `currentCSSZoom` of the element it describes, or of the nearest element containing both boxes for a measurement, so a `zoom: 1.5` box with `width: 120px` reads 120, while outlines and bands are drawn on the rendered box. `transform: scale()` is the opposite: it does not change layout, so its numbers stay rendered (see Bounds).
+
 **Hover target**
 The deepest element under the pointer while measure mode is on.
 
 **Selection**
-The elements the user picked. Clicking picks the deepest element under the pointer, not its wrapper; `Shift`+click adds or removes one element. `Shift+Enter` / `Enter` / `Tab` / `Shift+Tab` move it to the parent / first child / next / previous sibling (siblings wrap; children and siblings without a box are skipped), starting from the last-clicked element and leaving one element selected. These keys act only while something is selected and nothing in the page is being typed in.
+The elements the user picked. Clicking picks the deepest element under the pointer, not its wrapper; `Shift`+click adds or removes one element. `Shift+Enter` / `Enter` / `Tab` / `Shift+Tab` move it to the parent / first child / next / previous sibling (siblings wrap; children and siblings without a box are skipped), starting from the last-clicked element and leaving one element selected. These keys act only while something is selected and nothing in the page is being typed in. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
 
 **Selection bounds**
 The union of the bounds of every selected element. Measurements are taken from it, so a multi-selection measures like one box. Drawn dashed with its own W × H when more than one element is selected.

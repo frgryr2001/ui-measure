@@ -13,6 +13,19 @@ export const inset = (r: Rect, d: Edges, sign = 1): Rect => ({
   bottom: r.bottom - d.bottom * sign,
 });
 
+/**
+ * How much a transform scales a box on screen: its rendered size over its layout size (`offsetWidth`,
+ * rounded to whole px, so a difference under 1px is rounding, not scale). 1 without a layout size.
+ */
+export const scaleOf = (rendered: number, layout: number) => (layout > 0 && Math.abs(rendered - layout) >= 1 ? rendered / layout : 1);
+
+export const scaleEdges = (e: Edges, sx: number, sy: number): Edges => ({
+  top: e.top * sy,
+  right: e.right * sx,
+  bottom: e.bottom * sy,
+  left: e.left * sx,
+});
+
 /** The band between `outer` and `inner` as up to 4 non-overlapping rects. */
 export function ring(outer: Rect, inner: Rect): Rect[] {
   return [
@@ -37,4 +50,5 @@ export const union = (rects: Rect[]): Rect | null =>
 /** Label text: at most 2 decimals, no trailing zeros ("16", "16.5", "16.33"). */
 export const formatPx = (n: number) => String(Number(n.toFixed(2)));
 
-export const sizeLabel = (r: Rect) => `${formatPx(width(r))} × ${formatPx(height(r))}`;
+/** W × H of `r` (viewport px) in CSS px of an element under CSS `zoom` (`currentCSSZoom`). */
+export const sizeLabel = (r: Rect, zoom = 1) => `${formatPx(width(r) / zoom)} × ${formatPx(height(r) / zoom)}`;

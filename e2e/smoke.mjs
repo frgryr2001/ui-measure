@@ -3,7 +3,7 @@
 // Branded Chrome ignores --load-extension since 137, hence Chrome for Testing.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -39,13 +39,17 @@ async function poll(what, fn, ok, timeout = 5000) {
   assert.fail(`timed out waiting for ${what}, last value: ${JSON.stringify(last)}`);
 }
 
-// install-time surface: no permission warning, real icon instead of Chrome's letter
+// install-time surface: no permission warning (hosts only as optional), real icon instead of Chrome's letter
 const manifest = JSON.parse(readFileSync(join(extDir, 'manifest.json'), 'utf8'));
-assert.deepEqual([manifest.permissions, manifest.host_permissions], [['activeTab', 'scripting'], undefined]);
+assert.deepEqual(
+  [manifest.permissions, manifest.host_permissions, manifest.optional_host_permissions],
+  [['activeTab', 'scripting', 'contextMenus'], undefined, ['<all_urls>']],
+);
 assert.deepEqual(Object.keys(manifest.icons ?? {}), ['16', '32', '48', '128']);
 
+const pages = { '/frame.html': readFileSync(join(root, 'playground/frame.html')) };
 const html = readFileSync(join(root, 'playground/index.html'));
-const server = createServer((_req, res) => res.writeHead(200, { 'content-type': 'text/html' }).end(html));
+const server = createServer((req, res) => res.writeHead(200, { 'content-type': 'text/html' }).end(pages[req.url] ?? html));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
@@ -84,7 +88,7 @@ async function evaluate(sessionId, expression) {
 const timer = setTimeout(() => {
   console.error('e2e: overall timeout');
   process.exit(1);
-}, 60_000);
+}, 90_000);
 
 try {
   const { id: extId } = await send('Extensions.loadUnpacked', { path: extDir });
@@ -97,6 +101,8 @@ try {
   const worker = targets.find((t) => t.type === 'service_worker' && t.url === `chrome-extension://${extId}/background.js`);
   assert.ok(tab && worker, 'tab or service worker target missing');
   const { sessionId: sw } = await send('Target.attachToTarget', { targetId: worker.targetId, flatten: true });
+  // the first click was dropped (cause unknown) until something had been evaluated in the worker
+  await poll('worker listening', () => evaluate(sw, 'chrome.action.onClicked.hasListeners()'), Boolean);
 
   const hosts = () =>
     evaluate(page, `[...document.querySelectorAll('ui-measure-root')].map((h) => ({ open: h.matches(':popover-open'), svg: !!h.shadowRoot?.querySelector('svg') }))`);
@@ -400,6 +406,180 @@ try {
   await poll('"Copied JSON" toast', () => labelsOf(page), (l) => l.includes('Copied JSON'));
   console.log(`ok  C / J / P: CSS, JSON, prompt; selector ${selector} finds the tile again; navigator.clipboard fallback`);
 
+  // scaled box model: inside a scale(0.5) parent, the hover bands must line up with the rendered boxes
+  await evaluate(page, `document.querySelector('#scaled').scrollIntoView({ block: 'center' })`);
+  await mouse('mouseMoved', await corner('#scaled', 6, 6)); // in its padding
+  const bands = (selector) =>
+    evaluate(page, `(() => {
+      const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
+      const rects = (fill) => [...svg.querySelectorAll('rect[fill="' + fill + '"]')].map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)));
+      const edges = (rs) => rs.length === 4 && { outer: [rs[0][0], rs[0][1], rs[0][0] + rs[0][2], rs[1][1] + rs[1][3]], inner: [rs[2][0] + rs[2][2], rs[0][1] + rs[0][3], rs[3][0], rs[1][1]] };
+      const box = (el) => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
+      const el = document.querySelector(${JSON.stringify(selector)});
+      return { padding: edges(rects('rgb(34 197 94 / 0.35)')), margin: edges(rects('rgb(249 115 22 / 0.35)')), box: box(el), child: box(el.firstElementChild) };
+    })()`);
+  const near = (a, b) => a && a.every((v, i) => Math.abs(v - b[i]) < 0.5);
+  const scaled = await poll('bands of #scaled', () => bands('#scaled'), (o) => o.padding && o.margin);
+  const [x1, y1, x2, y2] = scaled.box;
+  assert.ok(near(scaled.padding.inner, scaled.child), `padding band inner edge must be the child's box: ${JSON.stringify(scaled)}`);
+  assert.ok(near(scaled.padding.outer, [x1 + 2, y1 + 2, x2 - 2, y2 - 2]), `padding band outer edge: border 4 × 0.5: ${JSON.stringify(scaled)}`);
+  assert.ok(near(scaled.margin.outer, [x1 - 8, y1 - 8, x2 + 8, y2 + 8]), `margin band: 16 × 0.5: ${JSON.stringify(scaled)}`);
+  console.log('ok  bands of an element in a scale(0.5) parent match its rendered box');
+
+
+  // CSS zoom 1.5: labels show CSS px, outlines and bands stay on the rendered (zoomed) boxes
+  const redLabels = () =>
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#f24822"] + text')].map((t) => t.textContent)`);
+  const hoverOutlines = () =>
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
+  await evaluate(page, `document.querySelector('#zoomed').scrollIntoView({ block: 'center' })`);
+  const zoomTile = '#zoomed > .tile';
+  await mouse('mouseMoved', await center(zoomTile));
+  const [zoomTileRect] = await rectsOf([zoomTile]);
+  await poll('zoomed tile: rendered outline, CSS size', async () => ({ o: await hoverOutlines(), l: await labelsOf(page) }), ({ o, l }) => o.includes(zoomTileRect) && l.includes('120 × 60'));
+  await mouse('mouseMoved', await corner('#zoom-card', 6, 6)); // in its padding
+  await poll('zoomed card size in CSS px', () => labelsOf(page), (l) => l.includes('144 × 44'));
+  const zoomed = await poll('bands of #zoom-card', () => bands('#zoom-card'), (o) => o.padding);
+  const [zx1, zy1, zx2, zy2] = zoomed.box;
+  assert.ok(near(zoomed.padding.inner, zoomed.child), `zoomed padding band inner edge must be the child's box: ${JSON.stringify(zoomed)}`);
+  assert.ok(near(zoomed.padding.outer, [zx1 + 3, zy1 + 3, zx2 - 3, zy2 - 3]), `zoomed padding band outer edge: border 2 × 1.5: ${JSON.stringify(zoomed)}`);
+  await select(await center(zoomTile));
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+  await mouse('mouseMoved', await corner('#zoom-card', 6, 6), 1);
+  await poll('Alt-measure across the zoomed gap: 24, not 36', redLabels, (l) => l.includes('24') && !l.includes('36'));
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  await enter(SHIFT);
+  await mouse('mouseMoved', await corner('#zoomed', 250, 80)); // below the shorter card: the container itself
+  await poll('zoomed flex gap 24', gapLabels, (g) => JSON.stringify(g) === '["24"]');
+  await select(await corner('#zoom-card', 6, 6));
+  await pressB();
+  await poll('blueprint of #zoom-card in CSS px', blueprint, (o) => ['10', '20', 'r 12'].every((t) => o.labels.includes(t)));
+  await pressB();
+  await pressC();
+  text = await poll('CSS of #zoom-card', clipboard, (t) => t.startsWith('/* div */\n#zoom-card {'));
+  assert.match(text, /^  width: 144px;\n  height: 44px;\n  box-sizing: border-box;\n  padding: 10px 20px;\n  border: 2px solid [^;]+;\n  border-radius: 12px;\n}$/m, `CSS of #zoom-card:\n${text}`);
+  console.log('ok  zoom 1.5: sizes, spacing, gap, blueprint padding / radius and Copy in CSS px; outline and bands on the rendered box');
+
+  // browser zoom is not CSS zoom: labels keep the same CSS px (story 13)
+  const dpr = await evaluate(page, 'devicePixelRatio');
+  await evaluate(sw, `chrome.tabs.setZoom(${tabId}, 1.25)`);
+  await poll('browser zoom applied', () => evaluate(page, 'devicePixelRatio'), (r) => Math.abs(r - dpr * 1.25) < 0.01);
+  await mouse('mouseMoved', await center(zoomTile));
+  await poll('browser zoom leaves CSS px labels alone', () => labelsOf(page), (l) => l.includes('120 × 60'));
+  assert.equal(await evaluate(page, 'document.body.currentCSSZoom'), 1, 'browser zoom must not show in currentCSSZoom');
+  await evaluate(sw, `chrome.tabs.setZoom(${tabId}, 0)`);
+  console.log('ok  browser zoom 125%: labels unchanged');
+
+  // shadow roots, open and closed (chrome.dom.openOrClosedShadowRoot): select, navigate and type inside them
+  await press('Escape', 'Escape', 27);
+  for (const mode of ['open', 'closed']) {
+    await evaluate(page, `document.querySelector('#shadow-${mode}').scrollIntoView({ block: 'center' })`);
+    const inRoot = (sel) =>
+      evaluate(page, `(() => { const r = (${JSON.stringify(sel)} ? window.shadowRoots.${mode}.querySelector(${JSON.stringify(sel)}) : document.querySelector('#shadow-${mode}')).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, rect: [r.x, r.y, r.width, r.height].map(Math.round).join(',') }; })()`);
+    const [t1, t2, input, host] = await Promise.all(['div:nth-of-type(1)', 'div:nth-of-type(2)', 'input', ''].map(inRoot));
+    await select(t1);
+    await poll(`${mode} root: click selects the inner tile`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([t1.rect]));
+    assert.ok((await labelsOf(page)).includes('60 × 40'), `${mode} root: inner tile size label`);
+    await tabKey();
+    await poll(`${mode} root: Tab → next tile`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([t2.rect]));
+    await enter(SHIFT);
+    await poll(`${mode} root: Shift+Enter → host`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([host.rect]));
+    await mouse('mouseMoved', { x: host.x, y: host.y + 26 }); // the host's bottom padding, under the tiles
+    await poll(`${mode} root: gaps of the host`, gapLabels, (g) => JSON.stringify(g) === '["12","12"]');
+    // the input's own (user-agent) shadow root is not entered
+    await mouse('mouseMoved', input);
+    await poll(`${mode} root: hover outline is the input`, hoverOutlines, (o) => o.includes(input.rect));
+    await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').focus({ preventScroll: true })`);
+    await pressL();
+    assert.equal(await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').value`), 'l', `${mode} root: typed L must reach the input`);
+    assert.equal((await overlay()).chip, null, `${mode} root: L while typing must not toggle the lock`);
+    await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').blur()`);
+    await press('Escape', 'Escape', 27);
+    console.log(`ok  ${mode} shadow root: click selects the inner tile, Tab / Shift+Enter, host gaps 12 12, typing in its input kept`);
+  }
+
+  // top layer: a dialog or popover the page opens while ON goes under the overlay
+  await send('DOM.enable', {}, page);
+  await send('DOM.getDocument', {}, page);
+  const topLayer = async () => {
+    const { nodeIds } = await send('DOM.getTopLayerElements', {}, page);
+    const names = await Promise.all(nodeIds.map(async (nodeId) => (await send('DOM.describeNode', { nodeId }, page)).node.localName));
+    return names.filter((n) => !n.startsWith('::')); // each entry's ::backdrop is listed too
+  };
+  for (const [what, inner, open, close] of [
+    ['dialog', 'dialog p', `document.querySelector('dialog').showModal()`, `document.querySelector('dialog').close()`],
+    ['popover', '#pop p', `document.querySelector('#pop').showPopover()`, `document.querySelector('#pop').hidePopover()`],
+  ]) {
+    await evaluate(page, open);
+    // listed per document, top first; the srcdoc and same-origin frames add their own overlays after
+    await poll(`overlay above the ${what}`, topLayer, (names) => names[0] !== 'ui-measure-root' && names[1] === 'ui-measure-root');
+    await mouse('mouseMoved', await center(inner));
+    const [want] = await rectsOf([inner]);
+    await poll(`hover outline inside the ${what}`, () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`), (o) => o.includes(want));
+    // an open modal makes the rest of the page inert
+    await evaluate(page, close);
+    console.log(`ok  ${what} opened while ON: overlay re-promoted above it, hover measures inside`);
+  }
+
+  // iframes: every frame the tool can reach draws its own overlay; the cross-origin one (localhost) needs host access
+  const SAME_FRAMES = ['#frame-srcdoc', '#frame-same'];
+  const inFrame = (id, expr) => evaluate(page, `(() => { const document = window.document.querySelector(${JSON.stringify(id)}).contentDocument; return ${expr}; })()`);
+  const crossTarget = (await send('Target.getTargets', { filter: [{}] })).targetInfos.find((t) => t.type === 'iframe' && t.url.startsWith('http://localhost:'));
+  assert.ok(crossTarget, 'cross-origin iframe target missing');
+  const { sessionId: cross } = await send('Target.attachToTarget', { targetId: crossTarget.targetId, flatten: true });
+  const frameState = async () => ({
+    top: (await hosts()).length,
+    same: await Promise.all(SAME_FRAMES.map((id) => inFrame(id, `document.querySelectorAll('ui-measure-root').length`))),
+    cross: await evaluate(cross, `document.querySelectorAll('ui-measure-root').length`),
+  });
+  await send('Extensions.triggerAction', { id: extId, targetId: tab.targetId });
+  await poll('every frame off', frameState, (f) => JSON.stringify(f) === '{"top":0,"same":[0,0],"cross":0}');
+  await send('Extensions.triggerAction', { id: extId, targetId: tab.targetId });
+  await poll('every reachable frame on, cross-origin without access stays off', frameState, (f) => JSON.stringify(f) === '{"top":1,"same":[1,1],"cross":0}');
+  await poll('badge ON', badge, (b) => b === 'ON');
+  await poll('toast points to the cross-origin menu', () => labelsOf(page), (l) => l.some((t) => t.includes('Measure cross-origin frames') && t.includes('localhost')));
+  console.log('ok  click → on in the top, srcdoc and same-origin frames; toast names the cross-origin host');
+
+  await evaluate(page, `document.querySelector('#frame-same').scrollIntoView({ block: 'center' })`);
+  const inFramePoint = async (id, selector) => {
+    const f = await evaluate(page, `(() => { const el = document.querySelector(${JSON.stringify(id)}); const r = el.getBoundingClientRect(); return { x: r.x + el.clientLeft, y: r.y + el.clientTop }; })()`);
+    const t = await inFrame(id, `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, rect: [r.x, r.y, r.width, r.height].map(Math.round).join(',') }; })()`);
+    return { x: f.x + t.x, y: f.y + t.y, rect: t.rect };
+  };
+  const frameOutlines = (id) =>
+    inFrame(id, `(() => {
+      const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
+      const box = (r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(',');
+      return {
+        hover: [...svg.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map(box),
+        selected: [...svg.querySelectorAll('rect[stroke-width="2"]')].map(box),
+        measure: [...svg.querySelectorAll('rect[rx] + text')].map((t) => t.textContent),
+      };
+    })()`);
+  const topHover = () => evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])').length`);
+  const t1 = await inFramePoint('#frame-same', '.tile:nth-child(1)');
+  const t2 = await inFramePoint('#frame-same', '.tile:nth-child(2)');
+  await mouse('mouseMoved', t1);
+  await poll('hover outline inside the same-origin frame', () => frameOutlines('#frame-same'), (o) => o.hover.includes(t1.rect));
+  await poll('no stale hover box in the top frame', topHover, (n) => n === 0);
+  await mouse('mousePressed', t1);
+  await mouse('mouseReleased', t1);
+  await poll('tile selected inside the frame', () => frameOutlines('#frame-same'), (o) => JSON.stringify(o.selected) === JSON.stringify([t1.rect]));
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+  await mouse('mouseMoved', t2, 1);
+  await poll('Alt-measure between the frame tiles: spacing 12', () => frameOutlines('#frame-same'), (o) => o.measure.includes('12'));
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  console.log('ok  hover, select and Alt-measure inside the same-origin frame');
+
+  // the click focused the frame: Esc clears its selection first, then turns every frame off
+  await press('Escape', 'Escape', 27);
+  await poll('Esc clears the frame selection', () => frameOutlines('#frame-same'), (o) => o.selected.length === 0);
+  assert.equal(JSON.stringify(await frameState()), '{"top":1,"same":[1,1],"cross":0}', 'clearing a frame selection keeps every frame on');
+  await press('Escape', 'Escape', 27);
+  await poll('Esc in a frame turns every frame off', frameState, (f) => JSON.stringify(f) === '{"top":0,"same":[0,0],"cross":0}');
+  await poll('badge cleared', badge, (b) => b === '');
+  console.log('ok  Esc in a frame: clears its selection, then turns every frame off and clears the badge');
+
   // plain http is not a secure context: no navigator.clipboard, the copy command still writes
   const httpUrl = `http://uim.test:${server.address().port}/`;
   const { targetId: httpTarget } = await send('Target.createTarget', { url: httpUrl });
@@ -420,6 +600,39 @@ try {
   assert.ok((await clipboard()).startsWith('/* div.tile */'), 'a failed copy must leave the clipboard alone');
   await send('Target.closeTarget', { targetId: httpTarget });
   console.log('ok  copy works on http; clear message when the clipboard is unavailable');
+
+  // a granted cross-origin host: headless Chrome can't answer the permission prompt of the icon's menu,
+  // so a copy of the build grants localhost up front, as the port-less pattern the menu asks for
+  const grantedDir = join(profile, 'granted-ext');
+  cpSync(extDir, grantedDir, { recursive: true });
+  writeFileSync(join(grantedDir, 'manifest.json'), JSON.stringify({ ...manifest, host_permissions: ['http://localhost/*'] }));
+  await send('Extensions.uninstall', { id: extId });
+  const { id: grantedId } = await send('Extensions.loadUnpacked', { path: grantedDir });
+  const { targetId: grantedTarget } = await send('Target.createTarget', { url });
+  const { sessionId: grantedPage } = await send('Target.attachToTarget', { targetId: grantedTarget, flatten: true });
+  await poll('page load', () => evaluate(grantedPage, 'document.readyState'), (s) => s === 'complete');
+  const grantedTargets = (await send('Target.getTargets', { filter: [{}] })).targetInfos;
+  const grantedWorker = grantedTargets.find((t) => t.type === 'service_worker' && t.url === `chrome-extension://${grantedId}/background.js`);
+  const { sessionId: grantedSw } = await send('Target.attachToTarget', { targetId: grantedWorker.targetId, flatten: true });
+  await poll('granted worker listening', () => evaluate(grantedSw, 'chrome.action?.onClicked.hasListeners()'), Boolean);
+  const grantedTab = grantedTargets.find((t) => t.type === 'tab' && t.url === url && t.targetId !== tab.targetId);
+  const grantedCross = grantedTargets.find((t) => t.type === 'iframe' && t.url.startsWith('http://localhost:') && t.targetId !== crossTarget.targetId);
+  assert.ok(grantedCross, 'cross-origin iframe target of the second tab missing');
+  const { sessionId: cross2 } = await send('Target.attachToTarget', { targetId: grantedCross.targetId, flatten: true });
+  await send('Extensions.triggerAction', { id: grantedId, targetId: grantedTab.targetId });
+  await poll('overlay in the granted cross-origin frame', () => evaluate(cross2, `document.querySelectorAll('ui-measure-root').length`), (n) => n === 1);
+  await evaluate(grantedPage, `document.querySelector('#frame-cross').scrollIntoView({ block: 'center' })`);
+  const frameBox = await evaluate(grantedPage, `(() => { const el = document.querySelector('#frame-cross'); const r = el.getBoundingClientRect(); return { x: r.x + el.clientLeft, y: r.y + el.clientTop }; })()`);
+  const crossTile = await evaluate(cross2, `(() => { const r = document.querySelector('.tile').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, rect: [r.x, r.y, r.width, r.height].map(Math.round).join(',') }; })()`);
+  // the first move into a fresh cross-process frame can get lost (seen before the tool is on too): move on every try
+  await poll('hover outline inside the cross-origin frame', async () => {
+    await mouse('mouseMoved', { x: frameBox.x + crossTile.x, y: frameBox.y + crossTile.y }, 0, grantedPage);
+    return evaluate(cross2, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
+  }, (o) => o.includes(crossTile.rect));
+  assert.ok(!(await labelsOf(grantedPage)).some((t) => t.includes('cross-origin')), 'no access toast once every frame is reached');
+  await send('Extensions.triggerAction', { id: grantedId, targetId: grantedTab.targetId });
+  await poll('click turns the cross-origin frame off too', () => evaluate(cross2, `document.querySelectorAll('ui-measure-root').length`), (n) => n === 0);
+  console.log('ok  granted host: the cross-origin frame draws its own overlay, hover measures inside, click turns it off');
 
   console.log('e2e passed');
 } catch (err) {
