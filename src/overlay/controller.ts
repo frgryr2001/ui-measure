@@ -3,7 +3,8 @@ import { blueprintKids, bounds, childrenOf, deepElementAt, isTypingInPage, lookA
 import type { Gap } from '../core/gap';
 import { LABEL_H, labelWidth, lineSpots, placeLabels, sizeSpots, type Anchors, type Label } from '../core/labels';
 import { EPSILON, measure, mid, type Measurement } from '../core/measure';
-import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
+import { ease } from '../core/motion';
+import { formatPx, height, ring, sizeLabel, union, width, type Edges, type Rect } from '../core/rect';
 import { FORMATS, type Format } from '../core/spec';
 import { copyText } from './clipboard';
 
@@ -52,6 +53,30 @@ const COPY_KEYS = new Map<string, { format: Format; toast: string }>([
 ]);
 const TOAST_MS = 1500;
 const NOTICE_MS = 6000;
+// share of the way an outline glides per 60 Hz frame: ~95% there in 120 ms
+const GLIDE = 0.35;
+
+const shift = (r: Rect, o: Edges, k: number): Rect => ({ left: r.left + o.left * k, top: r.top + o.top * k, right: r.right + o.right * k, bottom: r.bottom + o.bottom * k });
+
+/**
+ * Smooth motion for one outline. Moving to another element, it starts at the boxes shown last and glides;
+ * shown = real + a lag that `ease` shrinks, so the same element moving (scroll, transitions) follows instantly.
+ */
+function glider() {
+  let el: Element | null = null;
+  let shown: Rect[] = [];
+  let lags: Edges[] = [];
+  return (next: Element | null, real: Rect[], ms: number, factor: number): Rect[] => {
+    const start = next !== el ? (el && next ? real.map((r, i) => shift(shown[i] ?? r, r, -1)) : []) : lags;
+    el = next;
+    lags = ease(start, ms, factor);
+    shown = real.map((r, i) => {
+      const o = lags[i];
+      return o ? shift(r, o, 1) : r;
+    });
+    return shown;
+  };
+}
 
 // a letter shortcut: first press, no modifier, so Cmd/Ctrl+C and friends stay with the page
 const isBareKeydown = (e: KeyboardEvent) => e.type === 'keydown' && !e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
@@ -87,6 +112,10 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   const ids = new WeakMap<Element, number>();
   let nextId = 0;
   const idOf = (el: Element) => ids.get(el) ?? (ids.set(el, nextId), nextId++);
+  const glideHover = glider();
+  const glideSelection = glider();
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let lastFrame = performance.now();
   const ac = new AbortController();
   const capture = { capture: true, signal: ac.signal };
 
@@ -186,8 +215,10 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (document.visibilityState === 'hidden') clearTransient();
   }, { signal: ac.signal });
 
-  const tick = () => {
+  const tick = (now: number) => {
     raf = requestAnimationFrame(tick);
+    const ms = now - lastFrame;
+    lastFrame = now;
     selected = selected.filter((el) => el.isConnected);
     if (selected.length === 0) blueprint = false;
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
@@ -196,6 +227,12 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const selRect = union(selectedRects);
     const hover = target ? readBoxes(target) : null;
     const measuring = (alt || locked) && selRect !== null;
+    // outlines (and the hover size label) glide; while measuring they snap, so lines meet them where the numbers say
+    const factor = measuring || reducedMotion.matches ? 1 : GLIDE;
+    const [margin, border, padding, content] = glideHover(target, hover ? [hover.margin, hover.border, hover.padding, hover.content] : [], ms, factor);
+    const shownHover = hover && { margin: margin ?? hover.margin, border: border ?? hover.border, padding: padding ?? hover.padding, content: content ?? hover.content };
+    // only one element to another one glides; a multi-selection snaps
+    const shownSel = glideSelection(selected.length === 1 ? (selected[0] ?? null) : null, selRect ? [selRect] : [], ms, factor)[0] ?? selRect;
     const measurement = measuring && hover && target && !selected.includes(target) ? measure(selRect, hover.border) : null;
     // re-collected every frame like everything else, so scrolling reveals what the viewport cut
     const root = blueprint && !measuring ? selected.at(-1) : undefined;
@@ -224,13 +261,14 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       const z = zoomOf([...selected, target]);
       measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / z), 'measure', PRIORITY.measure, (t) => lineSpots(s, t)));
     }
-    // sizes are hidden while measuring: they sit where the vertical spacing label usually goes
+    // sizes are hidden while measuring: they sit where the vertical spacing label usually goes.
+    // At the real box, not the gliding one: it outranks most labels, and sweeping across them would move them for good (sticky anchors)
     if (selRect && !measuring) {
       add(`sel:${selected.map(idOf).join()}`, sizeLabel(selRect, zoomOf(selected)), 'size', PRIORITY.selection, (t) => sizeSpots(selRect, t));
     }
     // hovering the one selected element would repeat its size label
     if (hover && target && !measuring && !(selected.length === 1 && selected[0] === target)) {
-      add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots(hover.border, t));
+      add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots((shownHover ?? hover).border, t));
     }
     for (const { el, gaps } of gapsOf) {
       const priority = el === target ? PRIORITY.hoverGap : PRIORITY.gap;
@@ -280,9 +318,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     anchors = placed.anchors;
 
     const frame: Frame = {
-      hover,
-      selected: selectedRects,
-      selection: selRect,
+      hover: shownHover,
+      selected: selected.length === 1 && shownSel ? [shownSel] : selectedRects,
+      selection: shownSel,
       measuring,
       measurement,
       gaps: [...gapsOf, ...blueprintGaps].flatMap((o) => o.gaps),

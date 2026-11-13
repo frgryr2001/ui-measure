@@ -419,13 +419,45 @@ try {
       return { padding: edges(rects('rgb(34 197 94 / 0.35)')), margin: edges(rects('rgb(249 115 22 / 0.35)')), box: box(el), child: box(el.firstElementChild) };
     })()`);
   const near = (a, b) => a && a.every((v, i) => Math.abs(v - b[i]) < 0.5);
-  const scaled = await poll('bands of #scaled', () => bands('#scaled'), (o) => o.padding && o.margin);
+  // the hover box glides in from the last element (ticket 13): settled once two reads agree
+  const settled = () => {
+    let before = '';
+    return (o) => before === (before = JSON.stringify(o));
+  };
+  const scaledSettled = settled();
+  const scaled = await poll('bands of #scaled', () => bands('#scaled'), (o) => o.padding && o.margin && scaledSettled(o));
   const [x1, y1, x2, y2] = scaled.box;
   assert.ok(near(scaled.padding.inner, scaled.child), `padding band inner edge must be the child's box: ${JSON.stringify(scaled)}`);
   assert.ok(near(scaled.padding.outer, [x1 + 2, y1 + 2, x2 - 2, y2 - 2]), `padding band outer edge: border 4 × 0.5: ${JSON.stringify(scaled)}`);
   assert.ok(near(scaled.margin.outer, [x1 - 8, y1 - 8, x2 + 8, y2 + 8]), `margin band: 16 × 0.5: ${JSON.stringify(scaled)}`);
   console.log('ok  bands of an element in a scale(0.5) parent match its rendered box');
 
+  // smooth motion: the hover outline glides from tile to tile, and jumps under reduced motion
+  const outlinePositionsWhileMoving = async (motion) => {
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] }, page);
+    await evaluate(page, `document.querySelector('.row').scrollIntoView({ block: 'center' })`);
+    await mouse('mouseMoved', await center('.row .tile:nth-child(1)'));
+    await sleep(300);
+    await evaluate(page, `(() => {
+      const root = document.querySelector('ui-measure-root').shadowRoot;
+      const seen = (window.__outlines = new Set());
+      const end = performance.now() + 400;
+      const sample = () => {
+        seen.add([...root.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => r.getAttribute('x')).join());
+        if (performance.now() < end) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    })()`);
+    await mouse('mouseMoved', await center('.row .tile:nth-child(3)'));
+    await sleep(500);
+    return evaluate(page, 'window.__outlines.size');
+  };
+  const glided = await outlinePositionsWhileMoving('no-preference');
+  assert.ok(glided > 3, `hover outline must pass through in-between boxes, saw ${glided} positions`);
+  const jumped = await outlinePositionsWhileMoving('reduce');
+  assert.ok(jumped <= 2, `reduced motion: the hover outline jumps, saw ${jumped} positions`);
+  await send('Emulation.setEmulatedMedia', { features: [] }, page);
+  console.log(`ok  hover outline glides through ${glided} positions; ${jumped} under reduced motion`);
 
   // CSS zoom 1.5: labels show CSS px, outlines and bands stay on the rendered (zoomed) boxes
   const redLabels = () =>
@@ -439,7 +471,8 @@ try {
   await poll('zoomed tile: rendered outline, CSS size', async () => ({ o: await hoverOutlines(), l: await labelsOf(page) }), ({ o, l }) => o.includes(zoomTileRect) && l.includes('120 × 60'));
   await mouse('mouseMoved', await corner('#zoom-card', 6, 6)); // in its padding
   await poll('zoomed card size in CSS px', () => labelsOf(page), (l) => l.includes('144 × 44'));
-  const zoomed = await poll('bands of #zoom-card', () => bands('#zoom-card'), (o) => o.padding);
+  const zoomedSettled = settled();
+  const zoomed = await poll('bands of #zoom-card', () => bands('#zoom-card'), (o) => o.padding && zoomedSettled(o));
   const [zx1, zy1, zx2, zy2] = zoomed.box;
   assert.ok(near(zoomed.padding.inner, zoomed.child), `zoomed padding band inner edge must be the child's box: ${JSON.stringify(zoomed)}`);
   assert.ok(near(zoomed.padding.outer, [zx1 + 3, zy1 + 3, zx2 - 3, zy2 - 3]), `zoomed padding band outer edge: border 2 × 1.5: ${JSON.stringify(zoomed)}`);
