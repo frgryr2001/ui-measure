@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UI Measure playground</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.4 system-ui, sans-serif; color: #1f2937; background: #f8fafc; }
+    header { position: sticky; top: 0; z-index: 10; padding: 12px 24px; background: #111827; color: #fff; }
+    main { padding: 24px; display: grid; gap: 32px; }
+    h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    .tile { background: #c7d2fe; border-radius: 8px; }
+    .row { display: flex; gap: 24px; align-items: flex-start; }
+    .stack > * + * { margin-top: 16px; }
+    .card { width: 480px; padding: 24px 16px; border: 4px solid #a5b4fc; border-radius: 20px; background: #fff; }
+    .card .inner { padding: 8px; margin: 12px 0; background: #e0e7ff; }
+    .stage { position: relative; height: 220px; background: #fff; border: 1px dashed #cbd5e1; }
+    .abs { position: absolute; }
+    .scroller { height: 160px; overflow: auto; border: 1px solid #cbd5e1; background: #fff; }
+    .scroller > div { height: 600px; padding: 40px; }
+  </style>
+</head>
+<body>
+  <header>Sticky header (stays put while scrolling) · <a href="https://example.com" style="color:#93c5fd">link: must not navigate while ON</a></header>
+  <main>
+    <section>
+      <h2>Side by side: flex, gap 24, different heights</h2>
+      <div class="row">
+        <div class="tile" style="width:120px;height:60px"></div>
+        <div class="tile" style="width:80px;height:100px"></div>
+        <div class="tile" style="width:140px;height:40px;margin-top:30px"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Stacked: margin 16</h2>
+      <div class="stack" style="width:300px">
+        <div class="tile" style="height:40px"></div>
+        <div class="tile" style="height:40px;margin-left:40px"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Nested: card padding 24/16, border 4, radius 20 (Alt-hover the card from the inner box)</h2>
+      <div class="card">
+        <div class="inner">Inner box, padding 8, margin 12 0</div>
+        <button type="button" onclick="this.textContent = 'Click leaked through!'">Button: text must not change while ON</button>
+        <input placeholder="Focus me, then press Alt / Esc" style="margin-left:8px" />
+      </div>
+    </section>
+
+    <section>
+      <h2>Diagonal and partial overlap (absolute)</h2>
+      <div class="stage">
+        <div class="tile abs" style="left:24px;top:24px;width:100px;height:60px"></div>
+        <div class="tile abs" style="left:200px;top:130px;width:80px;height:60px;background:#fbcfe8"></div>
+        <div class="tile abs" style="left:360px;top:30px;width:120px;height:100px;background:#bbf7d0"></div>
+        <div class="tile abs" style="left:420px;top:90px;width:120px;height:100px;background:#fde68a;opacity:.85"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Transform: scale(0.5) — bounds follow the rendered size</h2>
+      <div class="tile" style="width:200px;height:80px;transform:scale(.5);transform-origin:left top"></div>
+    </section>
+
+    <section>
+      <h2>Scroll container: select a box inside, scroll, the outline follows</h2>
+      <div class="scroller"><div><div class="tile" style="width:160px;height:60px"></div></div></div>
+    </section>
+
+    <section>
+      <h2>Modal dialog: overlay must stay on top</h2>
+      <button type="button" onclick="document.querySelector('dialog').showModal()">Open dialog (turn the tool OFF first)</button>
+      <dialog><p style="padding:16px">Turn the tool ON now and hover me.</p><form method="dialog"><button>Close</button></form></dialog>
+    </section>
+
+    <section>
+      <h2>Flex wrap: column-gap 16, row-gap 12 · gaps 16 16 / 12 / 24 (16 + margin 8) · absolute box ignored</h2>
+      <div id="gap-wrap" style="position:relative;display:flex;flex-wrap:wrap;gap:12px 16px;width:272px">
+        <div class="tile" style="width:80px;height:40px"></div>
+        <div class="tile" style="width:80px;height:40px"></div>
+        <div class="tile" style="width:80px;height:40px"></div>
+        <div class="tile" style="width:80px;height:40px"></div>
+        <div class="tile" style="width:80px;height:40px;margin-left:8px"></div>
+        <div class="tile" style="position:absolute;left:200px;top:52px;width:40px;height:40px;background:#fbcfe8"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Flex column wrap: row-gap 10, column-gap 20 · gaps 10 / 20</h2>
+      <div id="gap-column" style="display:flex;flex-direction:column;flex-wrap:wrap;gap:10px 20px;width:140px;height:70px">
+        <div class="tile" style="width:60px;height:30px"></div>
+        <div class="tile" style="width:60px;height:30px"></div>
+        <div class="tile" style="width:60px;height:30px"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Grid: repeat(3, 80px), column-gap 16, row-gap 24 · gaps 16 16 / 24 / 16</h2>
+      <div id="gap-grid" style="display:grid;grid-template-columns:repeat(3,80px);gap:24px 16px">
+        <div class="tile" style="height:40px"></div>
+        <div class="tile" style="height:40px"></div>
+        <div class="tile" style="height:40px"></div>
+        <div class="tile" style="height:40px"></div>
+        <div class="tile" style="height:40px"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Blueprint: select the card, press B · padding 20 / 24, radius 20, column gap 12 · pill 9999px → r 16 · avatar 50% → r 24/20 · wrapper div merged into its tile · display:none child skipped</h2>
+      <div id="bp-card" style="display:flex;flex-direction:column;gap:12px;width:320px;padding:20px 24px;border:1px solid #cbd5e1;border-radius:20px;background:#fff">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div id="bp-avatar" class="tile" style="width:48px;height:40px;border-radius:50%"></div>
+          <div><div><div id="bp-merged" class="tile" style="width:120px;height:16px"></div></div></div>
+        </div>
+        <div style="display:none"><div class="tile" style="height:40px"></div></div>
+        <p style="margin:0">Body text</p>
+        <button id="bp-pill" type="button" style="height:32px;padding:0 16px;border:0;border-radius:9999px;background:#6366f1;color:#fff">Pill 9999px</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Blueprint load: 240 cells × 1 child + the grid = 481 nodes in view · cap 400 → +81 hidden</h2>
+      <div id="bp-many" style="display:grid;grid-template-columns:repeat(20,32px);gap:4px;width:max-content"></div>
+      <script>
+        document.querySelector('#bp-many').innerHTML = '<div style="padding:5px 6px;background:#e0e7ff"><div style="height:10px;background:#a5b4fc"></div></div>'.repeat(240);
+      </script>
+    </section>
+
+    <div style="height:800px"></div>
+  </main>
+</body>
+</html>

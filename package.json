@@ -1,0 +1,35 @@
+{
+  "name": "ui-measure",
+  "description": "Measure size and spacing of elements on any web page",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "test": "vitest run",
+    "e2e": "wxt build && node e2e/smoke.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
+    "playground": "vite playground --port 4319 --strictPort",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@wxt-dev/module-react": "^1.2.2",
+    "oxlint": "^1.93.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^5.1.0",
+    "wxt": "^0.21.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
