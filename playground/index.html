@@ -76,7 +76,7 @@
     </section>
 
     <section>
-      <h2>Shadow roots: open · closed — click selects the inner tile (60 × 40), not the host (padding 12, gap 12); Tab / Shift+Enter move inside the root</h2>
+      <h2>Shadow roots: open · closed — click selects the inner tile (60 × 40), not the host (padding 12, gap 12); click a tile again for the host</h2>
       <div class="row">
         <div id="shadow-open"></div>
         <div id="shadow-closed"></div>
@@ -86,7 +86,7 @@
         window.shadowRoots = {};
         for (const mode of ['open', 'closed']) {
           const root = document.querySelector(`#shadow-${mode}`).attachShadow({ mode });
-          root.innerHTML = `<style>:host{display:flex;gap:12px;padding:12px;border:1px dashed #cbd5e1;background:#fff}div{width:60px;height:40px;background:#c7d2fe}</style><div></div><div></div><input placeholder="${mode}: type L" size="8">`;
+          root.innerHTML = `<style>:host{display:flex;gap:12px;padding:12px;border:1px dashed #cbd5e1;background:#fff}div{width:60px;height:40px;background:#c7d2fe}</style><div></div><div></div><input placeholder="${mode}: type B" size="8">`;
           window.shadowRoots[mode] = root;
         }
       </script>

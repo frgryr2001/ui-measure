@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { radiusLabels } from './blueprint';
+import { HINT_H, placeHint } from './hint';
 import { lineSpots, placeLabels, sizeSpots, type Label } from './labels';
 import type { Rect } from './rect';
 
@@ -66,6 +68,23 @@ describe('placeLabels', () => {
   });
 });
 
+describe('pinned labels (radius, padding, gap)', () => {
+  it('hidden when their spot is outside the viewport, never pushed in', () => {
+    const { shown } = placeLabels([{ ...label('a', 1, { x: -50, y: 700 }), pinned: true }], VP, new Map());
+    expect(shown).toEqual([]);
+  });
+
+  it('pill 120 × 32, padding 0 16, r 16: the radius keeps its corner, the left padding it covers is hidden, not moved', () => {
+    const pill: Rect = { left: 100, top: 100, right: 220, bottom: 132 };
+    const [r] = radiusLabels(pill, [[16, 16], [16, 16], [16, 16], [16, 16]]);
+    const pad = (id: string, x: number): Label => ({ id, text: '16', priority: 0.95, at: [{ x, y: 116 }], pinned: true });
+    const { shown } = placeLabels([pad('left', 108), pad('right', 212), { id: 'r', text: r?.text ?? '', priority: 0.97, at: r?.at ?? [], pinned: true }], VP, new Map());
+    expect(shown.map((l) => l.id)).toEqual(['r', 'right']);
+    expect(shown[0]?.box.left).toBeGreaterThan(pill.left);
+    expect(shown[0]?.box.top).toBeGreaterThan(pill.top);
+  });
+});
+
 describe('sizeSpots + placeLabels on a row of tiles', () => {
   it('every tile of a tight row gets a size label, and no two overlap', () => {
     // 5 tiles 40 wide, 8 apart: a 56px label cannot sit under every tile
@@ -98,5 +117,22 @@ describe('lineSpots', () => {
       { x: 25.6, y: 8 },
       { x: -5.6, y: 8 },
     ]);
+  });
+});
+
+describe('labels move out of the hint’s way', () => {
+  it('a label under the hint takes its next spot; a pinned one is hidden', () => {
+    const hint = placeHint({ x: 100, y: 100 }, 120, HINT_H, VP);
+    const under = { x: 150, y: 125 };
+    const { shown } = placeLabels(
+      [
+        { id: 'size', text: '10 × 10', priority: 3, at: [under, { x: 150, y: 300 }] },
+        { id: 'pad', text: '8', priority: 1, at: [under], pinned: true },
+      ],
+      VP,
+      new Map(),
+      [hint],
+    );
+    expect(shown.map((l) => [l.id, l.box.top])).toEqual([['size', 291]]);
   });
 });

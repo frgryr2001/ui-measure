@@ -2,20 +2,24 @@ import { mid, type Segment } from './measure';
 import type { Rect } from './rect';
 
 export const LABEL_H = 18;
-// shortcut: assumes Overlay's 11px monospace (≈ 0.6em per char, also for ⌥ and ×) instead of measuring text
+// shortcut: assumes Overlay's 11px monospace (≈ 0.6em per char, also for ⌥, ×, → and ·) instead of measuring text
 // every frame; measure once with a canvas if the font changes or labels clip.
-export const labelWidth = (text: string) => text.length * 6.6 + 10;
+export const CHAR_W = 6.6;
+export const labelWidth = (text: string) => text.length * CHAR_W + 10;
 
-type Point = { x: number; y: number };
+export type Point = { x: number; y: number };
 
-/** A label to place: `at` lists the spots it may be centered on, best first. Higher `priority` places first. */
-export type Label = { id: string; text: string; priority: number; at: Point[] };
+/**
+ * A label to place: `at` lists the spots it may be centered on, best first. Higher `priority` places first.
+ * `pinned`: only those spots, never pushed inside the viewport, so it is hidden rather than placed away from what it describes.
+ */
+export type Label = { id: string; text: string; priority: number; at: Point[]; pinned?: boolean };
 
 /** Index of the spot each label used last frame, by id; lets a label stay put while it still fits. */
 export type Anchors = Map<string, number>;
 
 // space kept between two labels and between a label and the viewport edge
-const APART = 2;
+export const APART = 2;
 const CELL = 32;
 
 const hits = (a: Rect, b: Rect) =>
@@ -24,9 +28,10 @@ const hits = (a: Rect, b: Rect) =>
 /**
  * Greedy placement (research Phần 05 §5): in priority order each label takes the first spot that
  * fits the viewport and overlaps no label placed before it, trying last frame's spot first. Spots
- * are tried as given, then pushed inside the viewport; a label with no free spot is hidden.
+ * are tried as given, then (unless pinned) pushed inside the viewport; a label with no free spot is hidden.
+ * `taken`: boxes placed before every label (the Hint), which labels move out of the way of.
  */
-export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors): { shown: (L & { box: Rect })[]; anchors: Anchors } {
+export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors, taken: Rect[] = []): { shown: (L & { box: Rect })[]; anchors: Anchors } {
   // uniform grid of placed boxes so each test only looks at nearby labels
   const grid = new Map<string, Rect[]>();
   const cells = (r: Rect) => {
@@ -36,6 +41,10 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
     return keys;
   };
   const free = (r: Rect) => !cells(r).some((k) => grid.get(k)?.some((o) => hits(o, r)));
+  const occupy = (r: Rect) => {
+    for (const k of cells(r)) grid.set(k, [...(grid.get(k) ?? []), r]);
+  };
+  taken.forEach(occupy);
 
   const lo = { x: viewport.left + APART, y: viewport.top + APART };
   const shown: (L & { box: Rect })[] = [];
@@ -46,7 +55,7 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
     const boxAt = (left: number, top: number): Rect => ({ left, top, right: left + w, bottom: top + LABEL_H });
     const spots = [
       ...l.at.map((p) => boxAt(p.x - w / 2, p.y - LABEL_H / 2)),
-      ...l.at.map((p) => boxAt(Math.min(Math.max(p.x - w / 2, lo.x), hi.x), Math.min(Math.max(p.y - LABEL_H / 2, lo.y), hi.y))),
+      ...(l.pinned ? [] : l.at).map((p) => boxAt(Math.min(Math.max(p.x - w / 2, lo.x), hi.x), Math.min(Math.max(p.y - LABEL_H / 2, lo.y), hi.y))),
     ];
     const fits = (i: number) => {
       const r = spots[i];
@@ -56,7 +65,7 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
     const i = last !== undefined && fits(last) ? last : spots.findIndex((_, j) => fits(j));
     const box = spots[i];
     if (!box) continue;
-    for (const k of cells(box)) grid.set(k, [...(grid.get(k) ?? []), box]);
+    occupy(box);
     next.set(l.id, i);
     shown.push({ ...l, box });
   }

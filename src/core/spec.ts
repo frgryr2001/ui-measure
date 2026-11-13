@@ -37,7 +37,7 @@ const px = (n: number) => (formatPx(n) === '0' ? '0' : `${formatPx(n)}px`);
 const four = ([a, b, c, d]: Four) => (b !== d ? `${a} ${b} ${c} ${d}` : a !== c ? `${a} ${b} ${c}` : a !== b ? `${a} ${b}` : a);
 const edges = (e: Edges) => four([px(e.top), px(e.right), px(e.bottom), px(e.left)]);
 
-/** The declarations every format shares, as [property, value]. */
+/** The rule's declarations, as [property, value]. */
 function declarations(s: Spec): [string, string][] {
   const { width: w, style, color } = s.border;
   const widths = [w.top, w.right, w.bottom, w.left].map(formatPx);
@@ -60,37 +60,5 @@ function declarations(s: Spec): [string, string][] {
 }
 
 // a class like `*/` must not end the comment
-const css = (s: Spec) => [`/* ${s.name.replaceAll('*/', '* /')} */`, `${s.selector} {`, ...declarations(s).map(([p, v]) => `  ${p}: ${v};`), '}'].join('\n');
-
-const round = (n: number) => Number(formatPx(n));
-const roundEdges = (e: Edges): Edges => ({ top: round(e.top), right: round(e.right), bottom: round(e.bottom), left: round(e.left) });
-const corner = ([x, y]: Corners[number]) => (round(x) === round(y) ? round(x) : [round(x), round(y)]);
-
-const json = (s: Spec) =>
-  JSON.stringify(
-    {
-      selector: s.selector,
-      element: s.name,
-      width: round(s.width),
-      height: round(s.height),
-      padding: roundEdges(s.padding),
-      border: { ...s.border, width: roundEdges(s.border.width) },
-      radius: { topLeft: corner(s.radius[0]), topRight: corner(s.radius[1]), bottomRight: corner(s.radius[2]), bottomLeft: corner(s.radius[3]) },
-    },
-    null,
-    2,
-  );
-
-const prompt = (s: Spec) =>
-  [
-    `## ${s.name} (${formatPx(s.width)} × ${formatPx(s.height)})`,
-    '',
-    'Measured on the live page in CSS px; width and height are the border box.',
-    '',
-    `- selector: \`${s.selector}\``,
-    ...declarations(s).map(([p, v]) => `- ${p}: ${v}`),
-  ].join('\n');
-
-/** One function per Copy format. */
-export const FORMATS = { css, json, prompt } satisfies Record<string, (s: Spec) => string>;
-export type Format = keyof typeof FORMATS;
+/** What Copy writes: a CSS rule for the selector, the name as a comment. */
+export const css = (s: Spec) => [`/* ${s.name.replaceAll('*/', '* /')} */`, `${s.selector} {`, ...declarations(s).map(([p, v]) => `  ${p}: ${v};`), '}'].join('\n');

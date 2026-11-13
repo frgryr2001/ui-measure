@@ -136,12 +136,12 @@ describe('radiusLabels', () => {
   const b: Rect = { left: 0, top: 0, right: 200, bottom: 100 };
   const texts = (c: Corners) => radiusLabels(b, c).map((l) => l.text);
 
-  it('four equal corners: one label near the top-left corner, inside the box first, then outside', () => {
+  it('four equal corners: one label near the top-left corner, inside the box only', () => {
     const [l] = radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]]);
     expect(l?.text).toBe('r 12');
-    const [inside, outside] = l?.at ?? [];
+    const [inside, ...rest] = l?.at ?? [];
     expect(inside && inside.x > 0 && inside.x < 100 && inside.y > 0 && inside.y < 50).toBe(true);
-    expect(outside && outside.x < 0 && outside.y < 0).toBe(true);
+    expect(rest).toEqual([]);
     expect(radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]])).toHaveLength(1);
   });
 

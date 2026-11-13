@@ -27,6 +27,8 @@ function findChrome() {
   return found;
 }
 
+// the hover outline in the overlay's svg, as a quoted selector for evaluated page code
+const HOVER_OUTLINE = `'rect[stroke-width="1"]:not([stroke-dasharray])'`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function poll(what, fn, ok, timeout = 5000) {
   const end = Date.now() + timeout;
@@ -115,7 +117,11 @@ try {
       `overlay ${on ? 'on' : 'off'}`,
       hosts,
       (h) => (on ? h.length === 1 && h[0].open && h[0].svg : h.length === 0),
-    );
+    ).catch(async (e) => {
+      // the known first-click flake (ticket 01), not reproduced since: print what the worker saw for next time
+      const seen = await evaluate(sw, `(async () => ({ action: typeof chrome.action, listening: chrome.action?.onClicked.hasListeners(), tabs: (await chrome.tabs.query({})).map((t) => t.url ?? '(no url: no activeTab)') }))()`).catch(String);
+      throw new Error(`${e.message}\nworker: ${JSON.stringify(seen)}`);
+    });
     // without the `tabs` permission the URL is only visible once activeTab is granted
     tabId ??= await evaluate(sw, `chrome.tabs.query({}).then((ts) => ts.find((t) => t.url === ${JSON.stringify(url)})?.id)`);
     assert.ok(tabId, 'tab not visible to the worker after the click');
@@ -123,7 +129,7 @@ try {
     console.log(`ok  click → ${on ? 'on ' : 'off'}  hosts=${JSON.stringify(state)}`);
   }
 
-  // measure lock: hover measures to the selection without Alt
+  // the measuring chip and red measurement lines
   const overlay = () =>
     evaluate(page, `(() => {
       const svg = document.querySelector('ui-measure-root')?.shadowRoot?.querySelector('svg');
@@ -140,64 +146,75 @@ try {
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, text, modifiers }, session);
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, modifiers }, session);
   };
-  const pressL = () => press('l', 'KeyL', 76, 'l');
-  // label collision: every pair of visible label boxes (the only rects with rx) must be disjoint
+  const click = async (p, modifiers = 0, session = page) => {
+    await mouse('mousePressed', p, modifiers, session);
+    await mouse('mouseReleased', p, modifiers, session);
+  };
+  // the Hint: its words (keycaps and text) and its box, null while hidden
+  const hintOf = (session = page) =>
+    evaluate(session, `(() => {
+      const h = document.querySelector('ui-measure-root')?.shadowRoot?.querySelector('[data-hint]');
+      if (!h) return null;
+      const r = h.getBoundingClientRect();
+      const kids = [...h.children].map((c) => c.getBoundingClientRect());
+      return { text: [...h.children].map((c) => c.textContent).join(' '), box: [r.x, r.y, r.width, r.height], vw: innerWidth, vh: innerHeight, used: kids.at(-1).right - kids[0].left };
+    })()`);
+  // label collision: every pair of visible label boxes (the only rects with rx) and the hint must be disjoint
   const assertLabelsApart = async (what) => {
     const boxes = await evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[rx]')]
       .map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)))`);
+    const hint = await hintOf();
+    if (hint) boxes.push(hint.box);
     const pairs = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]).map((b) => [a, b]));
     assert.deepEqual(pairs, [], `labels overlap: ${what}`);
     return boxes.length;
   };
-  let a = await center('.row .tile:nth-child(1)');
-  let b = await center('.row .tile:nth-child(2)');
-
-  await pressL();
-  await poll('lock chip without selection', overlay, (o) => o.chip?.includes('lock') && o.lines === 0);
+  const a = await center('.row .tile:nth-child(1)');
+  const b = await center('.row .tile:nth-child(2)');
+  const SELECTION_HINT = '⌥ Alt measure · C copy · B children';
   await mouse('mouseMoved', a);
-  await mouse('mousePressed', a);
-  await mouse('mouseReleased', a);
+  await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
+  const labelChrome = await evaluate(page, `(() => {
+    const r = document.querySelector('ui-measure-root').shadowRoot.querySelector('rect[rx]');
+    return { rx: r?.getAttribute('rx'), filter: r?.closest('[data-labels]')?.style.filter ?? '' };
+  })()`);
+  assert.equal(labelChrome.rx, '8', 'a label is rounded like the hint');
+  assert.match(labelChrome.filter, /drop-shadow\(rgba\(0, 0, 0, 0\.3\) 0px 4px 12px\)/, `a label has the hint's shadow: ${labelChrome.filter}`);
+  await assertLabelsApart('hover with the hint');
+  await click(a);
+  // a click sends no pointermove: move to refresh the pointer
+  await mouse('mouseMoved', a);
+  const long = await poll('hint on the selected element offers its parent', hintOf, (h) => h?.text === `${SELECTION_HINT} · Click again → parent`);
+  // the pill's width is estimated from 6.6px per char: the drawn text must fill it, within a few px
+  assert.ok(Math.abs(long.used - (long.box[2] - 16)) < 6, `hint text ${long.used}px in a ${long.box[2]}px pill`);
   await mouse('mouseMoved', b);
-  await poll('measurement without Alt', overlay, (o) => o.chip?.includes('lock') && o.lines > 0);
-  console.log('ok  lock → hover measures without Alt');
-
-  await press('Escape', 'Escape', 27);
-  await poll('lock kept after clearing the selection', overlay, (o) => o.chip?.includes('lock') && o.lines === 0);
-  console.log('ok  Esc clears the selection, lock stays');
-
-  await evaluate(page, `document.querySelector('input').focus()`);
-  await pressL();
-  assert.equal(await evaluate(page, `document.querySelector('input').value`), 'l', 'typed L must reach the input');
-  await evaluate(page, `document.activeElement.blur()`);
-  // IME composition (Telex/VNI) outside an input
-  await evaluate(page, `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', code: 'KeyL', isComposing: true }))`);
-  await sleep(100);
-  assert.ok((await overlay()).chip?.includes('lock'), 'L while typing or composing must not toggle the lock');
-  console.log('ok  L ignored while typing / composing');
-
-  // one click at a time: the worker drops a click while the previous toggle is in flight
-  await send('Extensions.triggerAction', { id: extId, targetId: tab.targetId });
-  await poll('overlay off', hosts, (h) => h.length === 0);
-  await send('Extensions.triggerAction', { id: extId, targetId: tab.targetId });
-  await poll('lock reset after off → on', overlay, (o) => o.svg && o.chip === null);
-  console.log('ok  off → on resets the lock');
-
-  // focusing the input scrolled the page
-  await evaluate(page, 'window.scrollTo(0, 0)');
-  a = await center('.row .tile:nth-child(1)');
-  b = await center('.row .tile:nth-child(2)');
-  await mouse('mouseMoved', a);
-  await mouse('mousePressed', a);
-  await mouse('mouseReleased', a);
+  await poll('hint off the selection: no parent', hintOf, (h) => h?.text === SELECTION_HINT);
+  const hb = (await hintOf()).box;
+  assert.deepEqual([hb[0] - b.x, hb[1] - b.y].map(Math.round), [16, 16], `hint 16px below-right of the pointer: ${JSON.stringify(hb)}`);
+  const vp = await hintOf();
+  await mouse('mouseMoved', { x: vp.vw - 4, y: vp.vh - 4 });
+  const flipped = await poll('hint flips at the bottom-right corner', hintOf, (h) => h && h.box[0] + h.box[2] <= h.vw && h.box[1] + h.box[3] <= h.vh && h.box[0] < h.vw - 4);
+  assert.ok(flipped.box[0] >= 0 && flipped.box[1] >= 0, `hint on screen: ${JSON.stringify(flipped)}`);
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
   await mouse('mouseMoved', b, 1); // 1 = Alt
   await poll('Alt-hold chip', overlay, (o) => o.chip === '⌥ measuring' && o.lines > 0);
+  assert.equal(await hintOf(), null, 'hint hidden while measuring');
+  // the line glides onto tile 2; labels are checked once it has arrived
+  const linePaths = () =>
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('path[stroke="#f24822"]')].map((p) => p.getAttribute('d')).join('|')`);
+  const linesSettled = (() => {
+    let before = '';
+    return (d) => d.length > 0 && before === (before = d);
+  })();
+  await poll('measurement lines settled', linePaths, linesSettled);
   await assertLabelsApart('Alt-measuring tile 1 → tile 2');
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
   await poll('Alt released', overlay, (o) => o.chip === null && o.lines === 0);
+  await poll('hint back after Alt', hintOf, (h) => h?.text === SELECTION_HINT);
+  console.log('ok  hint: click to select → measure / copy / children (+ parent on the selection), 16px off the pointer, flips at the corner, hidden while measuring');
   console.log('ok  Alt hold still shows ⌥ measuring');
 
-  // selection navigation: outlines are compared to the page's own rects, rounded to 1px
+  // selection: outlines are compared to the page's own rects, rounded to 1px
   const SHIFT = 8;
   const rectsOf = (selectors) =>
     evaluate(page, `${JSON.stringify(selectors)}.map((s) => { const r = document.querySelector(s).getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(','); })`);
@@ -217,69 +234,53 @@ try {
     console.log(`ok  ${what}`);
   };
   const tile = (n) => `.row .tile:nth-child(${n})`;
-  const enter = (modifiers) => press('Enter', 'Enter', 13, '\r', modifiers);
-  const tabKey = (modifiers) => press('Tab', 'Tab', 9, undefined, modifiers);
 
   await press('Escape', 'Escape', 27);
-  await tabKey();
-  assert.notEqual(await evaluate(page, 'document.activeElement.tagName'), 'BODY', 'Tab without a selection must move page focus');
-  await evaluate(page, 'document.activeElement.blur()');
-  console.log('ok  Tab without a selection stays with the page');
-
-  // focus may have scrolled the page
-  await evaluate(page, 'window.scrollTo(0, 0)');
-  a = await center(tile(1));
-  b = await center(tile(2));
-  await mouse('mousePressed', a);
-  await mouse('mouseReleased', a);
+  await expectSelected('Esc clears the selection', []);
+  await click(a);
   await expectSelected('click selects tile 1', [tile(1)]);
-  await tabKey();
-  await expectSelected('Tab → next sibling', [tile(2)]);
-  await tabKey(SHIFT);
-  await expectSelected('Shift+Tab → previous sibling', [tile(1)]);
-  await tabKey(SHIFT);
-  await expectSelected('Shift+Tab wraps to the last sibling', [tile(3)]);
-  await enter(SHIFT);
-  await expectSelected('Shift+Enter → parent', ['.row']);
-  await enter();
-  await expectSelected('Enter → first child', [tile(1)]);
+  await click(a);
+  await expectSelected('click it again → parent', ['.row']);
+  // the same spot keeps climbing, up to <html>, where it stays
+  const depth = await evaluate(page, `(() => { let n = 0; for (let e = document.querySelector('.row'); e.parentElement; e = e.parentElement) n++; return n; })()`);
+  for (let i = 0; i < depth + 1; i++) await click(a);
+  await expectSelected(`${depth} more clicks climb to <html>, one more stays`, ['html']);
+  await click(b);
+  await expectSelected('a click elsewhere goes back down', [tile(2)]);
 
-  await mouse('mousePressed', b, SHIFT);
-  await mouse('mouseReleased', b, SHIFT);
+  // L / J / P / Tab / Enter are no shortcuts: with a selection they reach the page, the selection stays
+  await evaluate(page, `window.uimKeys = []; document.addEventListener('keydown', (e) => uimKeys.push(e.key))`);
+  for (const [key, code, keyCode, text] of [['l', 'KeyL', 76, 'l'], ['j', 'KeyJ', 74, 'j'], ['p', 'KeyP', 80, 'p'], ['Tab', 'Tab', 9], ['Enter', 'Enter', 13, '\r']]) {
+    await press(key, code, keyCode, text);
+  }
+  assert.deepEqual(await evaluate(page, 'uimKeys'), ['l', 'j', 'p', 'Tab', 'Enter'], 'L / J / P / Tab / Enter must reach the page');
+  await evaluate(page, 'document.activeElement.blur(); window.scrollTo(0, 0)');
+  await expectSelected('L / J / P / Tab / Enter reach the page', [tile(2)]);
+
+  await click(a);
+  await click(b, SHIFT);
   await expectSelected('Shift+click adds tile 2', [tile(1), tile(2)]);
   const [r1, r2] = (await rectsOf([tile(1), tile(2)])).map((s) => s.split(',').map(Number));
   const u = [r1[0], Math.min(r1[1], r2[1]), r2[0] + r2[2] - r1[0], Math.max(r1[1] + r1[3], r2[1] + r2[3]) - Math.min(r1[1], r2[1])].join(',');
   assert.deepEqual((await outlines()).union, [u], 'dashed union outline around both tiles');
-  await tabKey();
-  await expectSelected('Tab moves from the last-clicked element, back to one', [tile(3)]);
-  await mouse('mousePressed', b, SHIFT);
-  await mouse('mouseReleased', b, SHIFT);
-  await mouse('mousePressed', b, SHIFT);
-  await mouse('mouseReleased', b, SHIFT);
-  await expectSelected('Shift+click again removes it', [tile(3)]);
+  await click(b, SHIFT);
+  await expectSelected('Shift+click again removes it', [tile(1)]);
   assert.deepEqual((await outlines()).union, [], 'no union outline for one element');
 
-  await evaluate(page, `document.querySelector('input').focus({ preventScroll: true })`);
-  await enter(SHIFT);
-  await tabKey(SHIFT);
-  await sleep(100);
-  assert.equal(await evaluate(page, 'document.activeElement.tagName'), 'BUTTON', 'Shift+Tab in the input must move page focus');
-  await expectSelected('Enter / Tab ignored while typing', [tile(3)]);
-  await evaluate(page, 'document.activeElement.blur()');
-
-  // gaps of a flex / grid container: select a child, Shift+Enter to the container, read the purple labels
+  // gaps of a flex / grid container: click a child twice to select the container, read the purple labels
   const gapLabels = () =>
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#a855f7"] + text')].map((t) => t.textContent)`);
   for (const [id, want] of [['gap-wrap', ['16', '16', '12', '24']], ['gap-column', ['10', '20']], ['gap-grid', ['16', '16', '24', '16']]]) {
     await evaluate(page, `document.querySelector('#${id}').scrollIntoView({ block: 'center' })`);
     const child = await center(`#${id} > :first-child`);
     await mouse('mouseMoved', child);
-    await mouse('mousePressed', child);
-    await mouse('mouseReleased', child);
-    await enter(SHIFT);
+    await click(child);
+    await click(child);
     if (id === 'gap-column') {
-      // the hovered child's size label covers the 10 gap, and a child size outranks a gap
-      await poll('gap label hidden under the hover size', gapLabels, (g) => JSON.stringify(g) === '["20"]');
+      // the hint takes the spot below the hovered child 2, so its size label goes above, onto the 10 gap: a child size outranks a gap
+      await mouse('mouseMoved', await center(`#${id} > :nth-child(2)`));
+      await poll('gap label hidden under the hover size', gapLabels, (g) => !g.includes('10'));
+      await assertLabelsApart('hovering a child of #gap-column');
       console.log('ok  colliding gap label hidden while its child is hovered');
     }
     // hovering the container itself (its empty bottom-right corner) shows every gap label again
@@ -303,16 +304,48 @@ try {
     })()`);
   const corner = (selector, dx, dy) =>
     evaluate(page, `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + ${dx}, y: r.top + ${dy} }; })()`);
+  const select = async (p, session = page) => {
+    await mouse('mouseMoved', p, 0, session);
+    await click(p, 0, session);
+  };
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   // inside the card's top padding: the card itself is the deepest element there
   const cardPadding = await corner('#bp-card', 160, 8);
   await mouse('mouseMoved', cardPadding);
   await mouse('mousePressed', cardPadding);
   await mouse('mouseReleased', cardPadding);
+  // details on select, no key: the card's own radius, padding and column gap, no descendant outlines
+  let bp = await poll('details of #bp-card', blueprint, (o) => o.boxes === null && o.hatch && ['r 20', '20', '24'].every((t) => o.labels.includes(t)));
+  assert.deepEqual(await gapLabels(), ['12', '12'], 'column gaps of #bp-card on select');
+  await assertLabelsApart('details of #bp-card');
+  const radiusOf = (labels) => labels.filter((t) => t.startsWith('r '));
+  await select(await center('#bp-pill'));
+  await poll('details of the pill: r 16', blueprint, (o) => o.labels.includes('r 16'));
+  await evaluate(page, `document.querySelector('.card .inner').scrollIntoView({ block: 'center' })`);
+  await select(await corner('.card .inner', 2, 2));
+  bp = await poll('details of a square box: padding 8, no radius', blueprint, (o) => o.hatch && o.labels.includes('8'));
+  assert.deepEqual(radiusOf(bp.labels), [], 'no radius label on a square box');
+  await press('Escape', 'Escape', 27);
+  await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
+  await mouse('mouseMoved', cardPadding);
+  await poll('hover only: no padding numbers, no radius', async () => ({ ...(await blueprint()), green: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#16a34a"]').length`), hover: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE}).length`) }),
+    (o) => o.hover === 1 && !o.hatch && o.green === 0 && radiusOf(o.labels).length === 0);
+  await select(cardPadding);
+  await poll('details back on select', blueprint, (o) => o.labels.includes('r 20'));
+  const pill = await center('#bp-pill');
+  await mouse('mouseMoved', pill);
+  await mouse('mousePressed', pill, SHIFT);
+  await mouse('mouseReleased', pill, SHIFT);
+  bp = await poll('Shift+click: details gone, union size stays', async () => ({ ...(await blueprint()), ...(await outlines()) }), (o) => o.union.length === 1 && !o.hatch && radiusOf(o.labels).length === 0);
+  assert.ok(bp.labels.some((t) => t.startsWith('320 × ')), `union W × H (the pill is inside the card): ${JSON.stringify(bp.labels)}`);
+  console.log('ok  details on select: #bp-card r 20, padding 20 24, gaps 12 12; pill r 16; square box no radius; none on hover or multi-select');
+  await select(cardPadding);
   await pressB();
   // row, avatar, merged tile (3 same-size boxes → 1), text, pill; the display:none child is skipped
-  let bp = await poll('blueprint of #bp-card', blueprint, (o) => o.boxes === 5 && o.hatch);
+  bp = await poll('blueprint of #bp-card', blueprint, (o) => o.boxes === 5 && o.hatch);
+  await poll('hint in Blueprint', hintOf, (h) => h?.text === 'B / Esc to exit');
   assert.ok(bp.labels.includes('r 20') && bp.labels.includes('20') && bp.labels.includes('24'), `card radius and padding labels: ${JSON.stringify(bp.labels)}`);
+  assert.equal(bp.labels.filter((t) => t === 'r 20').length, 1, `B adds descendants, the root's labels once: ${JSON.stringify(bp.labels)}`);
   await assertLabelsApart('blueprint of #bp-card');
   console.log(`ok  B → blueprint of #bp-card: 5 boxes, ${bp.labels.length} labels apart`);
   for (const [selector, want] of [['#bp-pill', 'r 16'], ['#bp-avatar', 'r 24/20']]) {
@@ -329,21 +362,24 @@ try {
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   await sleep(100);
   assert.equal((await blueprint()).boxes, 5, 'B while typing must not leave blueprint');
+  // IME composition (Telex/VNI) outside an input
+  await evaluate(page, `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB', isComposing: true }))`);
+  await sleep(100);
+  assert.equal((await blueprint()).boxes, 5, 'B while composing must not leave blueprint');
   await press('Escape', 'Escape', 27);
   await poll('Esc leaves blueprint, keeps the selection', async () => ({ ...(await blueprint()), ...(await outlines()) }), (o) => o.boxes === null && o.selected.length === 1);
   await pressB();
   await poll('B again', blueprint, (o) => o.boxes === 5);
   await pressB();
   await poll('B toggles off', blueprint, (o) => o.boxes === null);
-  console.log('ok  B ignored while typing; Esc and B return to the selection');
+  console.log('ok  B ignored while typing / composing; Esc and B return to the selection');
 
   // load: 481 nodes in view, capped at 400; frame time while scrolling 1px per frame
   await evaluate(page, `document.querySelector('#bp-many').scrollIntoView({ block: 'center' })`);
   const many = await corner('#bp-many', 1, 1);
   await mouse('mouseMoved', many);
-  await mouse('mousePressed', many);
-  await mouse('mouseReleased', many);
-  await enter(SHIFT);
+  await click(many);
+  await click(many);
   await pressB();
   bp = await poll('blueprint of #bp-many', blueprint, (o) => o.boxes === 399 && o.labels.includes('+81 hidden'));
   const n = await assertLabelsApart('blueprint of #bp-many');
@@ -366,18 +402,13 @@ try {
   console.log(`ok  #bp-many: 399 boxes + root, +81 hidden, ${n} labels apart; frame ms while scrolling, blueprint median ${withBlueprint.median} p95 ${withBlueprint.p95} vs off ${without.median} / ${without.p95}`);
   assert.ok(+withBlueprint.p95 < 34, 'blueprint of ~400 nodes must keep scrolling at least 30 fps');
 
-  // copy: C / J / P write the last selection's spec; read back through this page, a secure origin
+  // copy: C writes the last selection's spec; read back through this page, a secure origin
   await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
   // readText rejects in a page without focus
   await send('Emulation.setFocusEmulationEnabled', { enabled: true }, page);
   const clipboard = () => evaluate(page, 'navigator.clipboard.readText()');
   const labelsOf = (session) =>
     evaluate(session, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[rx] + text')].map((t) => t.textContent)`);
-  const select = async (p, session = page) => {
-    await mouse('mouseMoved', p, 0, session);
-    await mouse('mousePressed', p, 0, session);
-    await mouse('mouseReleased', p, 0, session);
-  };
   const pressC = (session = page) => press('c', 'KeyC', 67, 'c', 0, session);
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   await select(await corner('#bp-card', 160, 8));
@@ -394,17 +425,12 @@ try {
   text = await poll('CSS of a tile without id', clipboard, (t) => t.startsWith('/* div.tile */'));
   const selector = text.split('\n')[1].slice(0, -2);
   assert.ok(await evaluate(page, `document.querySelector(${JSON.stringify(selector)}) === document.querySelector('.row .tile:nth-child(2)')`), `copied selector ${selector} must find the element again`);
-  await press('j', 'KeyJ', 74, 'j');
-  const json = JSON.parse(await poll('JSON on the clipboard', clipboard, (t) => t.startsWith('{')));
-  assert.deepEqual([json.selector, json.width, json.height], [selector, 80, 100]);
-  await press('p', 'KeyP', 80, 'p');
-  await poll('agent prompt on the clipboard', clipboard, (t) => t.startsWith('## div.tile (80 × 100)'));
-  // a page that swallows copy events: the secure page falls back to navigator.clipboard
+  // a page that swallows copy events: the secure page falls back to navigator.clipboard (another tile, so the text changes)
   await evaluate(page, `window.addEventListener('copy', (e) => e.stopImmediatePropagation(), true)`);
-  await press('j', 'KeyJ', 74, 'j');
-  await poll('JSON through navigator.clipboard', clipboard, (t) => t.startsWith('{'));
-  await poll('"Copied JSON" toast', () => labelsOf(page), (l) => l.includes('Copied JSON'));
-  console.log(`ok  C / J / P: CSS, JSON, prompt; selector ${selector} finds the tile again; navigator.clipboard fallback`);
+  await select(await center('.row .tile:nth-child(3)'));
+  await pressC();
+  await poll('CSS through navigator.clipboard', clipboard, (t) => t.startsWith('/* div.tile */') && t !== text);
+  console.log(`ok  C: selector ${selector} finds the tile again; navigator.clipboard fallback`);
 
   // scaled box model: inside a scale(0.5) parent, the hover bands must line up with the rendered boxes
   await evaluate(page, `document.querySelector('#scaled').scrollIntoView({ block: 'center' })`);
@@ -443,7 +469,7 @@ try {
       const seen = (window.__outlines = new Set());
       const end = performance.now() + 400;
       const sample = () => {
-        seen.add([...root.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => r.getAttribute('x')).join());
+        seen.add([...root.querySelectorAll(${HOVER_OUTLINE})].map((r) => r.getAttribute('x')).join());
         if (performance.now() < end) requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -456,14 +482,44 @@ try {
   assert.ok(glided > 3, `hover outline must pass through in-between boxes, saw ${glided} positions`);
   const jumped = await outlinePositionsWhileMoving('reduce');
   assert.ok(jumped <= 2, `reduced motion: the hover outline jumps, saw ${jumped} positions`);
+  // the measurement line rides the hover outline, and snaps with it under reduced motion
+  const linePositionsWhileMoving = async (motion) => {
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] }, page);
+    await evaluate(page, `document.querySelector('.row').scrollIntoView({ block: 'center' })`);
+    await select(await center('.row .tile:nth-child(1)'));
+    await sleep(300);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+    await mouse('mouseMoved', await center('.row .tile:nth-child(2)'), 1);
+    await sleep(300);
+    await evaluate(page, `(() => {
+      const root = document.querySelector('ui-measure-root').shadowRoot;
+      const seen = (window.__lines = new Set());
+      const end = performance.now() + 400;
+      const sample = () => {
+        seen.add([...root.querySelectorAll('path[stroke="#f24822"]')].map((p) => p.getAttribute('d')).join('|'));
+        if (performance.now() < end) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    })()`);
+    await mouse('mouseMoved', await center('.row .tile:nth-child(3)'), 1);
+    await sleep(500);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+    return evaluate(page, 'window.__lines.size');
+  };
+  const lineGlided = await linePositionsWhileMoving('no-preference');
+  assert.ok(lineGlided > 3, `measurement line must pass through in-between positions, saw ${lineGlided}`);
+  const lineJumped = await linePositionsWhileMoving('reduce');
+  assert.ok(lineJumped <= 2, `reduced motion: the measurement line jumps, saw ${lineJumped}`);
   await send('Emulation.setEmulatedMedia', { features: [] }, page);
+  await press('Escape', 'Escape', 27);
   console.log(`ok  hover outline glides through ${glided} positions; ${jumped} under reduced motion`);
+  console.log(`ok  measurement line glides through ${lineGlided} positions; ${lineJumped} under reduced motion`);
 
   // CSS zoom 1.5: labels show CSS px, outlines and bands stay on the rendered (zoomed) boxes
   const redLabels = () =>
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#f24822"] + text')].map((t) => t.textContent)`);
   const hoverOutlines = () =>
-    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
   await evaluate(page, `document.querySelector('#zoomed').scrollIntoView({ block: 'center' })`);
   const zoomTile = '#zoomed > .tile';
   await mouse('mouseMoved', await center(zoomTile));
@@ -481,11 +537,13 @@ try {
   await mouse('mouseMoved', await corner('#zoom-card', 6, 6), 1);
   await poll('Alt-measure across the zoomed gap: 24, not 36', redLabels, (l) => l.includes('24') && !l.includes('36'));
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
-  await enter(SHIFT);
+  await click(await center(zoomTile)); // the selected tile again: its parent #zoomed
   await mouse('mouseMoved', await corner('#zoomed', 250, 80)); // below the shorter card: the container itself
   await poll('zoomed flex gap 24', gapLabels, (g) => JSON.stringify(g) === '["24"]');
   await select(await corner('#zoom-card', 6, 6));
   await pressB();
+  // the hint at the pointer covers the top-left radius label: move below the card
+  await mouse('mouseMoved', await corner('#zoomed', 250, 80));
   await poll('blueprint of #zoom-card in CSS px', blueprint, (o) => ['10', '20', 'r 12'].every((t) => o.labels.includes(t)));
   await pressB();
   await pressC();
@@ -503,32 +561,30 @@ try {
   await evaluate(sw, `chrome.tabs.setZoom(${tabId}, 0)`);
   console.log('ok  browser zoom 125%: labels unchanged');
 
-  // shadow roots, open and closed (chrome.dom.openOrClosedShadowRoot): select, navigate and type inside them
+  // shadow roots, open and closed (chrome.dom.openOrClosedShadowRoot): select, climb and type inside them
   await press('Escape', 'Escape', 27);
   for (const mode of ['open', 'closed']) {
     await evaluate(page, `document.querySelector('#shadow-${mode}').scrollIntoView({ block: 'center' })`);
     const inRoot = (sel) =>
       evaluate(page, `(() => { const r = (${JSON.stringify(sel)} ? window.shadowRoots.${mode}.querySelector(${JSON.stringify(sel)}) : document.querySelector('#shadow-${mode}')).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, rect: [r.x, r.y, r.width, r.height].map(Math.round).join(',') }; })()`);
-    const [t1, t2, input, host] = await Promise.all(['div:nth-of-type(1)', 'div:nth-of-type(2)', 'input', ''].map(inRoot));
+    const [t1, input, host] = await Promise.all(['div:nth-of-type(1)', 'input', ''].map(inRoot));
     await select(t1);
     await poll(`${mode} root: click selects the inner tile`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([t1.rect]));
     assert.ok((await labelsOf(page)).includes('60 × 40'), `${mode} root: inner tile size label`);
-    await tabKey();
-    await poll(`${mode} root: Tab → next tile`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([t2.rect]));
-    await enter(SHIFT);
-    await poll(`${mode} root: Shift+Enter → host`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([host.rect]));
+    await click(t1);
+    await poll(`${mode} root: click again → host`, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify([host.rect]));
     await mouse('mouseMoved', { x: host.x, y: host.y + 26 }); // the host's bottom padding, under the tiles
     await poll(`${mode} root: gaps of the host`, gapLabels, (g) => JSON.stringify(g) === '["12","12"]');
     // the input's own (user-agent) shadow root is not entered
     await mouse('mouseMoved', input);
     await poll(`${mode} root: hover outline is the input`, hoverOutlines, (o) => o.includes(input.rect));
     await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').focus({ preventScroll: true })`);
-    await pressL();
-    assert.equal(await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').value`), 'l', `${mode} root: typed L must reach the input`);
-    assert.equal((await overlay()).chip, null, `${mode} root: L while typing must not toggle the lock`);
+    await pressB();
+    assert.equal(await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').value`), 'b', `${mode} root: typed B must reach the input`);
+    assert.equal((await blueprint()).boxes, null, `${mode} root: B while typing must not start blueprint`);
     await evaluate(page, `window.shadowRoots.${mode}.querySelector('input').blur()`);
     await press('Escape', 'Escape', 27);
-    console.log(`ok  ${mode} shadow root: click selects the inner tile, Tab / Shift+Enter, host gaps 12 12, typing in its input kept`);
+    console.log(`ok  ${mode} shadow root: click selects the inner tile, click again → host, host gaps 12 12, typing in its input kept`);
   }
 
   // top layer: a dialog or popover the page opens while ON goes under the overlay
@@ -548,7 +604,7 @@ try {
     await poll(`overlay above the ${what}`, topLayer, (names) => names[0] !== 'ui-measure-root' && names[1] === 'ui-measure-root');
     await mouse('mouseMoved', await center(inner));
     const [want] = await rectsOf([inner]);
-    await poll(`hover outline inside the ${what}`, () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`), (o) => o.includes(want));
+    await poll(`hover outline inside the ${what}`, () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`), (o) => o.includes(want));
     // an open modal makes the rest of the page inert
     await evaluate(page, close);
     console.log(`ok  ${what} opened while ON: overlay re-promoted above it, hover measures inside`);
@@ -584,17 +640,19 @@ try {
       const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
       const box = (r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(',');
       return {
-        hover: [...svg.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map(box),
+        hover: [...svg.querySelectorAll(${HOVER_OUTLINE})].map(box),
         selected: [...svg.querySelectorAll('rect[stroke-width="2"]')].map(box),
         measure: [...svg.querySelectorAll('rect[rx] + text')].map((t) => t.textContent),
       };
     })()`);
-  const topHover = () => evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])').length`);
+  const topHover = () => evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE}).length`);
   const t1 = await inFramePoint('#frame-same', '.tile:nth-child(1)');
   const t2 = await inFramePoint('#frame-same', '.tile:nth-child(2)');
   await mouse('mouseMoved', t1);
   await poll('hover outline inside the same-origin frame', () => frameOutlines('#frame-same'), (o) => o.hover.includes(t1.rect));
   await poll('no stale hover box in the top frame', topHover, (n) => n === 0);
+  assert.equal(await hintOf(), null, 'no hint in the top frame while the pointer is inside a frame');
+  assert.equal((await inFrame('#frame-same', `document.querySelector('ui-measure-root').shadowRoot.querySelector('[data-hint]')?.children[0].textContent`)), 'Click', 'the frame draws its own hint');
   await mouse('mousePressed', t1);
   await mouse('mouseReleased', t1);
   await poll('tile selected inside the frame', () => frameOutlines('#frame-same'), (o) => JSON.stringify(o.selected) === JSON.stringify([t1.rect]));
@@ -624,13 +682,14 @@ try {
   await poll('overlay on the http page', () => evaluate(httpPage, `!!document.querySelector('ui-measure-root')?.shadowRoot?.querySelector('svg')`), Boolean);
   await select(await center('.row .tile:nth-child(2)', httpPage), httpPage);
   await pressC(httpPage);
-  await poll('CSS copied on http', clipboard, (t) => t.startsWith('/* div.tile */'));
+  const httpCss = await poll('CSS copied on http', clipboard, (t) => t.startsWith('/* div.tile */'));
   await poll('"Copied CSS" toast on http', () => labelsOf(httpPage), (l) => l.includes('Copied CSS'));
   // a page that swallows copy events leaves no path on http: the toast says so
   await evaluate(httpPage, `window.addEventListener('copy', (e) => e.stopImmediatePropagation(), true)`);
-  await press('j', 'KeyJ', 74, 'j', 0, httpPage);
+  await select(await center('.row .tile:nth-child(3)', httpPage), httpPage);
+  await pressC(httpPage);
   await poll('clipboard error toast', () => labelsOf(httpPage), (l) => l.some((t) => t.startsWith('Copy failed')));
-  assert.ok((await clipboard()).startsWith('/* div.tile */'), 'a failed copy must leave the clipboard alone');
+  assert.equal(await clipboard(), httpCss, 'a failed copy must leave the clipboard alone');
   await send('Target.closeTarget', { targetId: httpTarget });
   console.log('ok  copy works on http; clear message when the clipboard is unavailable');
 
@@ -660,7 +719,7 @@ try {
   // the first move into a fresh cross-process frame can get lost (seen before the tool is on too): move on every try
   await poll('hover outline inside the cross-origin frame', async () => {
     await mouse('mouseMoved', { x: frameBox.x + crossTile.x, y: frameBox.y + crossTile.y }, 0, grantedPage);
-    return evaluate(cross2, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[stroke-width="1"]:not([stroke-dasharray])')].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
+    return evaluate(cross2, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
   }, (o) => o.includes(crossTile.rect));
   assert.ok(!(await labelsOf(grantedPage)).some((t) => t.includes('cross-origin')), 'no access toast once every frame is reached');
   await send('Extensions.triggerAction', { id: grantedId, targetId: grantedTab.targetId });

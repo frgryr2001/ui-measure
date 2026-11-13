@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FORMATS, selectorOf, type Spec } from './spec';
+import { css, selectorOf, type Spec } from './spec';
 
 // like the playground's #bp-card
 const card: Spec = {
@@ -14,7 +14,7 @@ const card: Spec = {
 
 describe('css', () => {
   it('is a rule for the selector with border-box size, shorthand padding, border and radius', () => {
-    expect(FORMATS.css(card)).toBe(
+    expect(css(card)).toBe(
       [
         '/* div.card */',
         'body > main > section:nth-of-type(3) > div {',
@@ -30,10 +30,10 @@ describe('css', () => {
   });
 
   // the value lines of the rule, without the comment, selector and braces
-  const body = (s: Spec) => FORMATS.css(s).split('\n').slice(2, -1);
+  const body = (s: Spec) => css(s).split('\n').slice(2, -1);
 
   it('the name comment survives a class containing */', () => {
-    expect(FORMATS.css({ ...card, name: 'div.a*/b' }).split('\n')[0]).toBe('/* div.a* /b */');
+    expect(css({ ...card, name: 'div.a*/b' }).split('\n')[0]).toBe('/* div.a* /b */');
   });
 
   it('uneven borders become longhands; no border and no radius are 0', () => {
@@ -53,41 +53,6 @@ describe('css', () => {
   it('elliptical corners use the slash syntax: a 48 × 40 box at 50% is 24px / 20px', () => {
     expect(body({ ...card, radius: [[24, 20], [24, 20], [24, 20], [24, 20]] })).toContain('  border-radius: 24px / 20px;');
     expect(body({ ...card, radius: [[12, 12], [0, 0], [12, 12], [0, 0]] })).toContain('  border-radius: 12px 0;');
-  });
-});
-
-describe('json', () => {
-  it('is the model with rounded numbers; a corner is one number when round, [x, y] when elliptical', () => {
-    const json: unknown = JSON.parse(FORMATS.json({ ...card, width: 320.004, radius: [[20, 20], [20, 20], [24, 20], [20, 20]] }));
-    expect(json).toEqual({
-      selector: 'body > main > section:nth-of-type(3) > div',
-      element: 'div.card',
-      width: 320,
-      height: 186.5,
-      padding: { top: 20, right: 24, bottom: 20, left: 24 },
-      border: { width: { top: 1, right: 1, bottom: 1, left: 1 }, style: 'solid', color: 'rgb(203, 213, 225)' },
-      radius: { topLeft: 20, topRight: 20, bottomRight: [24, 20], bottomLeft: 20 },
-    });
-  });
-});
-
-describe('prompt', () => {
-  it('is Markdown an agent can act on: name and size, selector, then the CSS values', () => {
-    expect(FORMATS.prompt(card)).toBe(
-      [
-        '## div.card (320 × 186.5)',
-        '',
-        'Measured on the live page in CSS px; width and height are the border box.',
-        '',
-        '- selector: `body > main > section:nth-of-type(3) > div`',
-        '- width: 320px',
-        '- height: 186.5px',
-        '- box-sizing: border-box',
-        '- padding: 20px 24px',
-        '- border: 1px solid rgb(203, 213, 225)',
-        '- border-radius: 20px',
-      ].join('\n'),
-    );
   });
 });
 

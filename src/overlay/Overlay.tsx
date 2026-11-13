@@ -1,4 +1,6 @@
+import type { CSSProperties } from 'react';
 import { rounded, type Corners } from '../core/blueprint';
+import { HINT_GAP, HINT_PAD_X, KEY_PAD_X, type PlacedHint } from '../core/hint';
 import { mid, type Connector, type Segment } from '../core/measure';
 import { height, ring, width, type Rect } from '../core/rect';
 import type { Frame, LabelKind, PlacedLabel } from './controller';
@@ -13,10 +15,11 @@ const MARGIN_FILL = 'rgb(249 115 22 / 0.35)';
 const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 const LABEL_COLOR: Record<LabelKind, string> = { size: BLUE, measure: RED, gap: PURPLE, padding: GREEN };
 
-// drawn exactly at the box placeLabels chose, so what is tested is what is seen
+// drawn exactly at the box placeLabels chose, so what is tested is what is seen.
+// rounded like the Hint; the layer below carries one shadow for every label (one per label blows the blueprint frame budget)
 const Label = ({ l }: { l: PlacedLabel }) => (
   <g>
-    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={3} fill={LABEL_COLOR[l.kind]} />
+    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={8} fill={LABEL_COLOR[l.kind]} />
     <text
       x={mid(l.box.left, l.box.right)}
       y={mid(l.box.top, l.box.bottom)}
@@ -79,40 +82,77 @@ const ConnectorLine = ({ c }: { c: Connector }) => (
   <line x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} stroke={RED} strokeWidth={1} strokeDasharray="4 3" shapeRendering="crispEdges" />
 );
 
+const KEYCAP: CSSProperties = { padding: `0 ${KEY_PAD_X}px`, lineHeight: '18px', borderRadius: 4, background: 'rgb(255 255 255 / 0.18)', color: '#fff' };
+
+// HTML, not SVG, for the shadow; `all: initial` keeps the page's inherited text styles from changing its width
+const Hint = ({ hint: { box, parts } }: { hint: PlacedHint }) => (
+  <div
+    data-hint=""
+    style={{
+      all: 'initial',
+      position: 'fixed',
+      left: box.left,
+      top: box.top,
+      width: width(box),
+      height: height(box),
+      boxSizing: 'border-box',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: HINT_GAP,
+      padding: `0 ${HINT_PAD_X}px`,
+      borderRadius: 8,
+      background: 'rgb(24 24 27 / 0.92)',
+      boxShadow: '0 4px 12px rgb(0 0 0 / 0.3)',
+      color: 'rgb(228 228 231)',
+      font: `11px ${FONT}`,
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+    }}
+  >
+    {parts.map((p, i) => <span key={i} style={p.kind === 'key' ? KEYCAP : undefined}>{p.text}</span>)}
+  </div>
+);
+
 export function Overlay({ frame }: { frame: Frame }) {
-  const { hover, selected, selection, measuring, measurement, gaps, labels, blueprint } = frame;
+  const { hover, selected, selection, measuring, measurement, gaps, labels, details, hint } = frame;
   return (
-    <svg
-      width="100%"
-      height="100%"
-      style={{ position: 'fixed', inset: 0, pointerEvents: 'none', overflow: 'visible' }}
-    >
-      <defs>
-        {/* user space: stripes line up across every band */}
-        <pattern id="uim-hatch" patternUnits="userSpaceOnUse" width={6} height={6} patternTransform="rotate(45)">
-          <line x1={0} y1={0} x2={0} y2={6} stroke={PADDING_HATCH} strokeWidth={1.5} />
-        </pattern>
-      </defs>
-      {blueprint && (
-        <>
-          <path d={rectsPath(blueprint.padding)} fill="url(#uim-hatch)" />
-          <path d={rectsPath(blueprint.outlines)} fill="none" stroke={BLUE} strokeWidth={1} strokeDasharray="4 3" shapeRendering="crispEdges" />
-          <path d={arcsPath(blueprint.corners)} fill="none" stroke={BLUE} strokeWidth={1.5} />
-        </>
-      )}
-      {hover && !measuring && (
-        <>
-          <Bands rects={ring(hover.margin, hover.border)} fill={MARGIN_FILL} />
-          <Bands rects={ring(hover.padding, hover.content)} fill={PADDING_FILL} />
-        </>
-      )}
-      {hover && <Outline r={hover.border} color={measuring ? RED : BLUE} strokeWidth={1} />}
-      {selected.map((r, i) => <Outline key={i} r={r} color={BLUE} strokeWidth={2} />)}
-      {selection && selected.length > 1 && <Outline r={selection} color={BLUE} strokeWidth={1} dash="4 3" />}
-      {measurement?.connectors.map((c, i) => <ConnectorLine key={i} c={c} />)}
-      {measurement?.segments.map((s, i) => <SegmentLine key={i} s={s} color={RED} />)}
-      {gaps.map((g, i) => <SegmentLine key={i} s={g} color={PURPLE} />)}
-      {labels.map((l, i) => <Label key={i} l={l} />)}
-    </svg>
+    <>
+      <svg
+        width="100%"
+        height="100%"
+        style={{ position: 'fixed', inset: 0, pointerEvents: 'none', overflow: 'visible' }}
+      >
+        <defs>
+          {/* user space: stripes line up across every band */}
+          <pattern id="uim-hatch" patternUnits="userSpaceOnUse" width={6} height={6} patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={6} stroke={PADDING_HATCH} strokeWidth={1.5} />
+          </pattern>
+        </defs>
+        {details && (
+          <>
+            <path d={rectsPath(details.padding)} fill="url(#uim-hatch)" />
+            <path d={rectsPath(details.outlines)} fill="none" stroke={BLUE} strokeWidth={1} strokeDasharray="4 3" shapeRendering="crispEdges" />
+            <path d={arcsPath(details.corners)} fill="none" stroke={BLUE} strokeWidth={1.5} />
+          </>
+        )}
+        {hover && !measuring && (
+          <>
+            <Bands rects={ring(hover.margin, hover.border)} fill={MARGIN_FILL} />
+            <Bands rects={ring(hover.padding, hover.content)} fill={PADDING_FILL} />
+          </>
+        )}
+        {hover && <Outline r={hover.border} color={measuring ? RED : BLUE} strokeWidth={1} />}
+        {selected.map((r, i) => <Outline key={i} r={r} color={BLUE} strokeWidth={2} />)}
+        {selection && selected.length > 1 && <Outline r={selection} color={BLUE} strokeWidth={1} dash="4 3" />}
+        {measurement?.connectors.map((c, i) => <ConnectorLine key={i} c={c} />)}
+        {measurement?.segments.map((s, i) => <SegmentLine key={i} s={s} color={RED} />)}
+        {gaps.map((g, i) => <SegmentLine key={i} s={g} color={PURPLE} />)}
+        <g data-labels="" style={{ filter: 'drop-shadow(0 4px 12px rgb(0 0 0 / 0.3))' }}>
+          {labels.map((l, i) => <Label key={i} l={l} />)}
+        </g>
+      </svg>
+      {hint && <Hint hint={hint} />}
+    </>
   );
 }

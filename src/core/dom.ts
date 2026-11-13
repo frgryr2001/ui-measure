@@ -56,10 +56,10 @@ export function deepElementAt(x: number, y: number, ignore: Element, shadowOf: S
 export const parentOf = (el: Element): Element | null =>
   el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
 
-// shortcut: follows the DOM, not the flat tree, so `<slot>`ed and `display:contents` children are
-// unreachable by Enter and Tab and their gaps are not drawn; walk assignedElements() / grandchildren if web-component pages need it.
+// shortcut: follows the DOM, not the flat tree, so the gaps of `<slot>`ed and `display:contents` children
+// are not drawn; walk assignedElements() / grandchildren if web-component pages need it.
 /** Children that render a box, read from the shadow root when there is one (like hit testing). */
-export const childrenOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
+const childrenOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
   [...(shadowOf(el) ?? el).children].filter((c) => c !== ignore && c.getClientRects().length > 0);
 
 /** Gaps between the in-flow children of a flex or grid container; none for other elements. */
@@ -123,14 +123,6 @@ export function readRadii(el: Element, b: Rect): Corners {
   const [tl, tr, br, bl] = cssRadii(el, b, z);
   const zoomed = ([x, y]: Corner): Corner => [x * z, y * z];
   return [zoomed(tl), zoomed(tr), zoomed(br), zoomed(bl)];
-}
-
-/** Next (`step` 1) or previous (-1) rendered sibling, wrapping around; null when there is none. */
-export function siblingOf(el: Element, step: 1 | -1, ignore: Element, shadowOf: ShadowOf): Element | null {
-  const parent = parentOf(el);
-  const siblings = parent ? childrenOf(parent, ignore, shadowOf) : [];
-  const i = siblings.indexOf(el);
-  return i < 0 ? null : (siblings[(i + step + siblings.length) % siblings.length] ?? null);
 }
 
 /** True when keyboard focus is in an editable field of the page (not our own UI). */

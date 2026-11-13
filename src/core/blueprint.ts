@@ -38,7 +38,8 @@ const radiusText = ([x, y]: Corner) => `r ${x === y ? formatPx(x) : `${formatPx(
 
 /**
  * Radius values of box `b`: one label at the top-left when all four corners match, else one per
- * rounded corner, in CSS px under CSS `zoom`. Spots: on the corner's 45° line, 0.3 r + 6 px into the box (research Phần 05 §4.3), then as far outside it.
+ * rounded corner, in CSS px under CSS `zoom`. One spot: on the corner's 45° line, 0.3 r + 6 px into the box
+ * (research Phần 05 §4.3); outside the box it would land on the page's content next to it.
  */
 export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[] }[] {
   const [first] = corners;
@@ -52,7 +53,7 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
     const [cx, cy, sx, sy] = d;
     const dx = sx * (0.3 * c[0] + 6 + labelWidth(text) / 2);
     const dy = sy * (0.3 * c[1] + 6 + LABEL_H / 2);
-    return [{ text, at: [{ x: cx + dx, y: cy + dy }, { x: cx - dx, y: cy - dy }] }];
+    return [{ text, at: [{ x: cx + dx, y: cy + dy }] }];
   });
 }
 
