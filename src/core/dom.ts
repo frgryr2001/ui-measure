@@ -81,15 +81,17 @@ export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf, touch
 
 const radius = (cs: CSSStyleDeclaration, corner: string) => cs.getPropertyValue(`border-${corner}-radius`);
 
-// no padding, border or radius: a same-size wrapper or child loses nothing by merging (see `keptInChain`).
+// plain: no padding, border or radius, so a same-size wrapper or child loses nothing by merging (see `keptInChain`).
 // All-zero computed shorthands serialize as one "0px".
-const isPlain = (cs: CSSStyleDeclaration) =>
-  cs.getPropertyValue('padding') === '0px' && cs.getPropertyValue('border-width') === '0px' && cs.getPropertyValue('border-radius') === '0px';
+const decoration = (cs: CSSStyleDeclaration) => {
+  const round = cs.getPropertyValue('border-radius') !== '0px';
+  return { round, plain: !round && cs.getPropertyValue('padding') === '0px' && cs.getPropertyValue('border-width') === '0px' };
+};
 
 /** How the blueprint walk treats `el` (see `classify`). */
 export function lookAt(el: Element): Look {
   const cs = getComputedStyle(el);
-  return classify({ tag: el.tagName, display: cs.display, visibility: cs.visibility, visible: el.checkVisibility({ opacityProperty: true }), rect: bounds(el), plain: isPlain(cs) });
+  return classify({ tag: el.tagName, display: cs.display, visibility: cs.visibility, visible: el.checkVisibility({ opacityProperty: true }), rect: bounds(el), ...decoration(cs) });
 }
 
 /**
@@ -110,25 +112,26 @@ const hasOneChild = (el: Element, ignore: Element, shadowOf: ShadowOf) => {
   return n === 1;
 };
 
+type Chain = Parameters<typeof keptInChain<Element>>[0];
+
 /** `el`, then each ancestor with its bounds whose only rendered child the previous one is, deepest first (see `keptInChain`). */
-function sameSizeChain(el: Element, ignore: Element, shadowOf: ShadowOf): { node: Element; plain: boolean }[] {
+function sameSizeChain(el: Element, ignore: Element, shadowOf: ShadowOf): Chain {
   const b = bounds(el);
-  const chain = [{ node: el, plain: isPlain(getComputedStyle(el)) }];
+  const chain: Chain = [{ node: el, ...decoration(getComputedStyle(el)) }];
   // bounds first: they are cheap, and differ for almost every parent
-  for (let p = parentOf(el); p && same(bounds(p), b) && hasOneChild(p, ignore, shadowOf); p = parentOf(p)) chain.push({ node: p, plain: isPlain(getComputedStyle(p)) });
+  for (let p = parentOf(el); p && same(bounds(p), b) && hasOneChild(p, ignore, shadowOf); p = parentOf(p)) chain.push({ node: p, ...decoration(getComputedStyle(p)) });
   return chain;
 }
 
-/** The box a click on `el`, the deepest element at the pointer, selects: among the elements sharing its bounds, the one Blueprint keeps. */
-export const boxAt = (el: Element, ignore: Element, shadowOf: ShadowOf): Element => keptInChain(sameSizeChain(el, ignore, shadowOf))[0] ?? el;
+/** The box a click on `el`, the deepest element at the pointer, selects: the elements sharing its bounds are one box, kept as Blueprint keeps it. */
+export const boxAt = (el: Element, ignore: Element, shadowOf: ShadowOf): Element => keptInChain(sameSizeChain(el, ignore, shadowOf)).node;
 
-/** Where clicking the selected `el` again climbs: the next box up that Blueprint would keep; `el` itself at the top of the page. */
+/** The element whose corner radius the selected `el` shows: itself, or a same-size wrapper merged into it (`keptInChain`). */
+export const roundOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element => keptInChain(sameSizeChain(el, ignore, shadowOf)).round;
+
+/** Where clicking the selected `el` again climbs: the box of the first ancestor past its same-size wrappers; `el` itself at the top of the page. */
 export function boxAbove(el: Element, ignore: Element, shadowOf: ShadowOf): Element {
-  const chain = sameSizeChain(el, ignore, shadowOf);
-  // every other element of the chain is an ancestor of `el`
-  const [next] = keptInChain(chain).filter((k) => k !== el);
-  if (next) return next;
-  const parent = parentOf(chain.at(-1)?.node ?? el);
+  const parent = parentOf(sameSizeChain(el, ignore, shadowOf).at(-1)?.node ?? el);
   return parent ? boxAt(parent, ignore, shadowOf) : el;
 }
 

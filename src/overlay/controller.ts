@@ -1,5 +1,5 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
+import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
@@ -228,7 +228,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     // re-collected every frame like everything else, so scrolling reveals what the viewport cut
     const bp = root && blueprint ? collect(root, (el) => blueprintKids(el, host, shadowOf), lookAt, viewport) : null;
     // the root from the element itself: collect drops one under 8px or out of view
-    const kept = (root ? [root, ...(bp?.nodes ?? []).map((k) => k.node).filter((n) => n !== root)] : []).map((node) => ({ node, boxes: readBoxes(node), touch: touchLimit(dpr, zoomOf([node])) }));
+    // `round`: the element whose radius the node shows, a same-size wrapper merged into it (`keptInChain`)
+    const kept = (root ? [{ node: root, round: roundOf(root, host, shadowOf) }, ...(bp?.nodes ?? []).filter((k) => k.node !== root)] : []).map(({ node, round }) => ({ node, round, boxes: readBoxes(node), touch: touchLimit(dpr, zoomOf([node])) }));
     // the one selected element's own boxes are the ones gliding; Blueprint descendants stay where they are
     const drawnBoxes = (node: Element, boxes: Boxes) => (shownSingle && node === single ? shownSingle : boxes);
     const drawnGap = (el: Element, g: Gap): Gap => {
@@ -238,7 +239,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       return { ...g, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
     };
     const gapsOf = kept.map((k) => ({ el: k.node, gaps: readGaps(k.node, host, shadowOf, k.touch).map((g) => drawnGap(k.node, g)) }));
-    const corners = kept.map((k) => ({ el: k.node, box: drawnBoxes(k.node, k.boxes).border, radii: readRadii(k.node, k.boxes.border) }));
+    const corners = kept.map((k) => ({ el: k.node, box: drawnBoxes(k.node, k.boxes).border, radii: readRadii(k.round, k.boxes.border) }));
 
     const labels: (Label & { kind: LabelKind })[] = [];
     // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden

@@ -343,11 +343,9 @@ try {
     await mouse('mouseMoved', { x: chainSpot.x + 300, y: chainSpot.y });
   };
   await clickChain();
-  await poll('10-deep chain: the padded innermost box', labelTexts, (l) => l.includes('8') && l.includes('12') && !l.includes('r 8'));
+  // one box: the inner box's padding and the outer box's radius, on the first click
+  await poll('10-deep chain: padding 8 12 of the inner box and r 8 of the outer one', labelTexts, (l) => l.includes('8') && l.includes('12') && l.includes('r 8'));
   await expectSelected('10-deep chain: one outline', ['#chain-9']);
-  await clickChain();
-  await poll('click again → the rounded outer box, same outline', labelTexts, (l) => l.includes('r 8') && !l.includes('12'));
-  await expectSelected('10-deep chain: the outer box has the same outline', ['#chain-0']);
   await clickChain();
   await expectSelected('click again → past the chain', ['#wrap-chain']);
   await press('Escape', 'Escape', 27);

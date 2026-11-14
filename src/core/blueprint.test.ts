@@ -27,10 +27,12 @@ describe('radii', () => {
 // a test tree: each node says what it looks like; `kids` are its children
 type N = { id: string; look: Look; kids?: N[] };
 const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
-const at = (left: number, top: number, w: number, h: number, plain = false): Look => ({ kind: 'box', rect: { left, top, right: left + w, bottom: top + h }, plain });
+// decorated by default; `round`: has a corner radius (a plain box has none)
+const at = (left: number, top: number, w: number, h: number, plain = false, round = false): Look => ({ kind: 'box', rect: { left, top, right: left + w, bottom: top + h }, plain, round });
 const run = (root: N, caps?: typeof CAPS) => {
   const { nodes, hidden } = collect(root, (n) => n.kids ?? [], (n) => n.look, VP, caps);
-  return { kept: nodes.map((k) => `${k.node.id}@${k.depth}<${k.parent < 0 ? '-' : nodes[k.parent]?.node.id}`), hidden };
+  // `~id`: the radius is read from that merged wrapper, not from the node
+  return { kept: nodes.map((k) => `${k.node.id}@${k.depth}<${k.parent < 0 ? '-' : nodes[k.parent]?.node.id}${k.round === k.node ? '' : `~${k.round.id}`}`), hidden };
 };
 
 describe('collect', () => {
@@ -88,12 +90,19 @@ describe('collect', () => {
     expect(run(tree).kept).toEqual(['root@0<-', 'x@1<root']);
   });
 
-  it('a decorated same-size child is never dropped: under a decorated wrapper or the root, both stay', () => {
+  it('a padded same-size child of a rounded wrapper: one box, the child with the wrapper\'s radius', () => {
     const padded = (id: string): N => ({ id, look: at(0, 0, 300, 200), kids: [{ id: `${id}-x`, look: at(10, 10, 20, 20) }] });
-    expect(run({ id: 'root', look: at(0, 0, 300, 200, true), kids: [padded('inner')] }).kept).toEqual(['root@0<-', 'inner@1<root', 'inner-x@2<inner']);
-    expect(run({ id: 'root', look: at(0, 0, 400, 400), kids: [{ id: 'card', look: at(0, 0, 300, 200), kids: [padded('inner')] }] }).kept).toEqual([
-      'root@0<-', 'card@1<root', 'inner@2<card', 'inner-x@3<inner',
+    expect(run({ id: 'root', look: at(0, 0, 400, 400), kids: [{ id: 'card', look: at(0, 0, 300, 200, false, true), kids: [padded('inner')] }] }).kept).toEqual([
+      'root@0<-', 'inner@1<root~card', 'inner-x@2<inner',
     ]);
+    // the child's own radius wins
+    const rounded: N = { id: 'inner', look: at(0, 0, 300, 200, false, true) };
+    expect(run({ id: 'root', look: at(0, 0, 400, 400), kids: [{ id: 'card', look: at(0, 0, 300, 200, false, true), kids: [rounded] }] }).kept).toEqual(['root@0<-', 'inner@1<root']);
+  });
+
+  it('the root is never replaced: a decorated same-size child under it stays its own box', () => {
+    const padded: N = { id: 'inner', look: at(0, 0, 300, 200), kids: [{ id: 'inner-x', look: at(10, 10, 20, 20) }] };
+    expect(run({ id: 'root', look: at(0, 0, 300, 200, true), kids: [padded] }).kept).toEqual(['root@0<-', 'inner@1<root', 'inner-x@2<inner']);
   });
 
   it('no merge when the wrapper has other rendered children (an inset:0 overlay next to content)', () => {
@@ -108,11 +117,11 @@ describe('collect', () => {
 
 describe('classify', () => {
   const rect: Rect = { left: 0, top: 0, right: 10, bottom: 10 };
-  const base = { tag: 'DIV', display: 'block', visibility: 'visible', visible: true, rect, plain: true };
+  const base = { tag: 'DIV', display: 'block', visibility: 'visible', visible: true, rect, plain: true, round: false };
   const kind = (o: Partial<typeof base>) => classify({ ...base, ...o }).kind;
 
   it('a rendered element is a box', () => {
-    expect(classify(base)).toEqual({ kind: 'box', rect, plain: true });
+    expect(classify(base)).toEqual({ kind: 'box', rect, plain: true, round: false });
   });
 
   it('display:none, content-visibility:hidden and opacity 0 (checkVisibility false) reject the subtree', () => {
@@ -172,31 +181,37 @@ describe('radiusLabels', () => {
 });
 
 describe('keptInChain (click and hover on same-size wrappers)', () => {
-  // deepest first, as dom.ts reads it: `plain` = no padding, border or radius
-  const chain = (...links: [string, boolean][]) => keptInChain(links.map(([node, plain]) => ({ node, plain })));
+  // deepest first, as dom.ts reads it: 'plain' (no padding, border or radius), 'padded' (padding or border), 'round' (radius only)
+  type Deco = 'plain' | 'padded' | 'round';
+  const link = ([node, d]: [string, Deco]) => ({ node, plain: d === 'plain', round: d === 'round' });
+  const chain = (first: [string, Deco], ...up: [string, Deco][]) => keptInChain([link(first), ...up.map(link)]);
 
-  it('a decorated wrapper absorbs its plain child: the click picks the wrapper', () => {
-    expect(chain(['row', true], ['rounded', false])).toEqual(['rounded']);
+  it('a rounded wrapper absorbs its plain child: the click picks the wrapper', () => {
+    expect(chain(['row', 'plain'], ['rounded', 'round'])).toEqual({ node: 'rounded', round: 'rounded' });
   });
 
   it('a decorated child replaces a plain wrapper', () => {
-    expect(chain(['btn', false], ['wrap', true])).toEqual(['btn']);
+    expect(chain(['btn', 'padded'], ['wrap', 'plain'])).toEqual({ node: 'btn', round: 'btn' });
   });
 
-  it('both decorated: both stay, the inner one first', () => {
-    expect(chain(['inner', false], ['outer', false])).toEqual(['inner', 'outer']);
+  it('a padded child in a rounded wrapper is one box: the child, with the wrapper\'s radius', () => {
+    expect(chain(['row', 'padded'], ['card', 'round'])).toEqual({ node: 'row', round: 'card' });
   });
 
   it('both plain: the inner one, like Blueprint', () => {
-    expect(chain(['body', true], ['html', true])).toEqual(['body']);
+    expect(chain(['body', 'plain'], ['html', 'plain'])).toEqual({ node: 'body', round: 'body' });
   });
 
-  it('a 10-deep chain, padding inside and radius outside: the padded box, then the rounded one', () => {
-    const plain = Array.from({ length: 8 }, (_, i): [string, boolean] => [`d${8 - i}`, true]);
-    expect(chain(['d9', false], ...plain, ['d0', false])).toEqual(['d9', 'd0']);
+  it('a 10-deep chain, padding inside and radius outside: one box, the padded one with the outer radius', () => {
+    const plain = Array.from({ length: 8 }, (_, i): [string, Deco] => [`d${8 - i}`, 'plain']);
+    expect(chain(['d9', 'padded'], ...plain, ['d0', 'round'])).toEqual({ node: 'd9', round: 'd0' });
   });
 
-  it('an element alone is kept', () => {
-    expect(chain(['el', true])).toEqual(['el']);
+  it('two radii: the innermost one is drawn', () => {
+    expect(chain(['in', 'round'], ['out', 'round'])).toEqual({ node: 'in', round: 'in' });
+  });
+
+  it('an element alone is its own box', () => {
+    expect(chain(['el', 'plain'])).toEqual({ node: 'el', round: 'el' });
   });
 });

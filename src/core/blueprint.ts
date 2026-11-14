@@ -79,8 +79,8 @@ export type Look =
   | { kind: 'reject' }
   // no box of its own, but its children may render (display:contents, visibility:hidden)
   | { kind: 'skip' }
-  // plain: no padding, border or radius, so a same-size child loses nothing by replacing it
-  | { kind: 'box'; rect: Rect; plain: boolean };
+  // plain: no padding, border or radius, so a same-size child loses nothing by replacing it; round: has a corner radius
+  | { kind: 'box'; rect: Rect; plain: boolean; round: boolean };
 
 // no meaningful box (and <svg> content is never walked: dom.ts gives an <svg> no children)
 const NO_BOX = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'BR', 'WBR', 'LINK', 'META']);
@@ -90,17 +90,17 @@ const NO_BOX = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'BR', 'WBR', 
  * `checkVisibility({ opacityProperty: true })`: false for display:none, content-visibility:hidden,
  * opacity 0 and display:contents.
  */
-export function classify(s: { tag: string; display: string; visibility: string; visible: boolean; rect: Rect; plain: boolean }): Look {
+export function classify(s: { tag: string; display: string; visibility: string; visible: boolean; rect: Rect; plain: boolean; round: boolean }): Look {
   if (NO_BOX.has(s.tag)) return { kind: 'reject' };
   if (s.display === 'contents') return { kind: 'skip' };
   if (!s.visible) return { kind: 'reject' };
   // a child may set visibility:visible again
   if (s.visibility !== 'visible') return { kind: 'skip' };
-  return { kind: 'box', rect: s.rect, plain: s.plain };
+  return { kind: 'box', rect: s.rect, plain: s.plain, round: s.round };
 }
 
-/** A node the blueprint draws. `parent` indexes the nearest kept ancestor, -1 for none. */
-export type Kept<T> = { node: T; rect: Rect; depth: number; parent: number };
+/** A node the blueprint draws. `parent` indexes the nearest kept ancestor, -1 for none; `round`: the node, or the merged wrapper whose radius it draws. */
+export type Kept<T> = { node: T; rect: Rect; depth: number; parent: number; round: T };
 
 export const CAPS = { maxDepth: 8, maxNodes: 400, minSize: 8 };
 
@@ -109,36 +109,45 @@ const meets = (a: Rect, b: Rect) => a.left < b.right && b.left < a.right && a.to
 export const same = (a: Rect, b: Rect) =>
   Math.abs(a.left - b.left) <= 0.5 && Math.abs(a.top - b.top) <= 0.5 && Math.abs(a.right - b.right) <= 0.5 && Math.abs(a.bottom - b.bottom) <= 0.5;
 
-/** The wrapper merge: which of a same-size wrapper and its only child is kept. One box when one is plain: the decorated one, else the child. */
-const keeps = (outerPlain: boolean, innerPlain: boolean): 'outer' | 'inner' | 'both' => (outerPlain ? 'inner' : innerPlain ? 'outer' : 'both');
+/**
+ * The wrapper merge: a same-size wrapper and its only child are one box, kept as the child unless only the wrapper
+ * is decorated. A wrapper with the child's bounds can't have padding or border, so it adds at most a radius, which
+ * the merged box draws (`round`) when the child has none.
+ */
+const keeps = (outerPlain: boolean, innerPlain: boolean): 'outer' | 'inner' => (innerPlain && !outerPlain ? 'outer' : 'inner');
+
+type Link<T> = { node: T; plain: boolean; round: boolean };
 
 /**
- * The boxes Blueprint keeps among `chain`: an element, then each ancestor with its bounds whose only rendered child
- * the previous one is (dom.ts reads it), deepest first. Merged from the top like `collect`; returned deepest first,
- * so a click picks the first and climbs through the rest.
+ * The one box `chain` is on screen: an element, then each ancestor with its bounds whose only rendered child the
+ * previous one is (dom.ts reads it), deepest first. Merged from the top like `collect`: `node` is what a click
+ * selects, `round` the element whose corner radius it shows.
  */
-export function keptInChain<T>(chain: { node: T; plain: boolean }[]): T[] {
-  const kept: { node: T; plain: boolean }[] = [];
-  for (const link of chain.toReversed()) {
-    const outer = kept.at(-1);
-    const keep = outer ? keeps(outer.plain, link.plain) : 'both';
-    if (keep === 'inner') kept[kept.length - 1] = link;
-    else if (keep === 'both') kept.push(link);
+export function keptInChain<T>([deepest, ...up]: [Link<T>, ...Link<T>[]]): { node: T; round: T } {
+  const [top, ...down] = [...up.toReversed(), deepest] as const;
+  let { node, plain, round } = top;
+  let roundNode = node;
+  for (const link of down) {
+    if (keeps(plain, link.plain) === 'outer') continue;
+    // the innermost radius wins
+    if (link.round || !round) [roundNode, round] = [link.node, link.round];
+    [node, plain] = [link.node, link.plain];
   }
-  return kept.map((k) => k.node).reverse();
+  return { node, round: roundNode };
 }
 
 /**
  * Nodes of `root`'s subtree to annotate, in document order (research Phần 05 §3.1). Boxes smaller
  * than `minSize` or outside `viewport` are skipped, their children still walked (they may overflow).
- * A wrapper whose only rendered child has its bounds is one node when at least one of them is
- * plain: the decorated one, else the child (the root counts as decorated). Nodes deeper than
+ * A wrapper whose only rendered child has its bounds is one node (`keeps`), with the wrapper's radius when the
+ * child has none; the root is never replaced, so a decorated same-size child of it stays a node. Nodes deeper than
  * `maxDepth` (counted in kept nodes) are cut with their subtrees, and once `maxNodes` are kept the
  * walk stops; both count what they cut in `hidden`.
  */
 export function collect<T>(root: T, kids: (n: T) => T[], look: (n: T) => Look, viewport: Rect, caps = CAPS): { nodes: Kept<T>[]; hidden: number } {
   const nodes: Kept<T>[] = [];
   const plain: boolean[] = [];
+  const round: boolean[] = [];
   let hidden = 0;
   // shortcut: counts every element below a cut, display:none ones too, so the walk never reads their style; walk with `look` if "+N" must be exact.
   const count = (n: T): number => kids(n).reduce((sum, c) => sum + count(c), 1);
@@ -154,9 +163,14 @@ export function collect<T>(root: T, kids: (n: T) => T[], look: (n: T) => Look, v
     let below = depth;
     const p = nodes[parent];
     if (l.kind === 'box' && width(l.rect) >= caps.minSize && height(l.rect) >= caps.minSize && meets(l.rect, viewport)) {
-      const keep = p && alone && same(p.rect, l.rect) ? keeps(plain[parent] ?? false, l.plain) : 'both';
-      if (p && keep !== 'both') {
+      const keep = p && alone && same(p.rect, l.rect) ? keeps(plain[parent] ?? false, l.plain) : null;
+      // the user picked the root: a same-size child merges into it, never the other way round
+      if (p && keep && !(keep === 'inner' && p.node === root && !l.plain)) {
         if (keep === 'inner') {
+          if (l.round || !round[parent]) {
+            p.round = n;
+            round[parent] = l.round;
+          }
           p.node = n;
           plain[parent] = l.plain;
         }
@@ -164,9 +178,10 @@ export function collect<T>(root: T, kids: (n: T) => T[], look: (n: T) => Look, v
         hidden += count(n);
         return;
       } else {
-        at = nodes.push({ node: n, rect: l.rect, depth, parent }) - 1;
-        // the user picked the root: a same-size child merges into it, not the other way round
+        at = nodes.push({ node: n, rect: l.rect, depth, parent, round: n }) - 1;
+        // the root counts as decorated: a plain same-size child is absorbed into it
         plain[at] = l.plain && n !== root;
+        round[at] = l.round;
         below = depth + 1;
       }
     }

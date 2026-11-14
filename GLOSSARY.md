@@ -16,7 +16,7 @@ The unit of every number the tool shows: the px you write in CSS. Browser zoom n
 The box a click would select at the pointer while measure mode is on (see Selection).
 
 **Selection**
-The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper: among elements sharing its bounds, the one with padding, border or corner radius, the same one Blueprint keeps; `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up that Blueprint would keep, so a container its children cover is still reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
+The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper. Elements sharing its bounds, each the only child of the next, are one box, kept as Blueprint keeps it: the inner one with padding or border (else a rounded wrapper over a plain child), showing a wrapper's corner radius when it has none of its own. `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up, past its same-size wrappers, so a container its children cover is still reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
 
 **Details**
 The numbers of the one selected element, shown on select with no key: W × H, padding, corner radius and, for a container, its gaps. Margins are drawn as a band without numbers (a distance to a neighbour is a measurement). Not shown for a multi-selection or while measuring; a hover target shows only its outline, W × H and bands.
@@ -48,7 +48,7 @@ The empty distance between consecutive children of one container, whatever makes
 What Copy (`C`) writes for the last-selected element as CSS: a selector that finds it again, its bounds' W × H (border box), padding, border and corner radius.
 
 **Blueprint**
-`B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline and W × H, plus hatched padding, gaps and corner radius. A wrapper whose only child has its bounds counts as one box; depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
+`B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline and W × H, plus hatched padding, gaps and corner radius. A wrapper whose only child has its bounds counts as one box (with the wrapper's radius when the child has none); depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
 _Avoid_: X-ray (a plain outline of every element on the page), overview
 
 **Leader**
