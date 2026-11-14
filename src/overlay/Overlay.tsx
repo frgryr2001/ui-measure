@@ -165,7 +165,8 @@ const Styles = ({ styles: { box, groups } }: { styles: NonNullable<Frame['styles
       <div key={g} style={{ display: 'block', marginTop: g > 0 ? STYLES_GROUP_GAP : 0 }}>
         {rows.map((r, i) => (
           <div key={i} data-style-row="" style={{ display: 'block', height: STYLES_ROW_H }}>
-            <span style={{ color: theme.styles.name }}>{`${r.name}  `}</span>
+            {/* a list's later rows (each shadow) hide the repeated name but keep its width, so values stay aligned */}
+            <span style={{ color: theme.styles.name, visibility: rows[i - 1]?.name === r.name ? 'hidden' : undefined }}>{`${r.name}  `}</span>
             {r.color && <span data-swatch="" style={{ ...SWATCH_STYLE, background: r.color }} />}
             {r.value}
           </div>

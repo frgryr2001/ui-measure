@@ -56,9 +56,11 @@ describe('styleRows', () => {
     expect(rows({ 'background-color': 'oklab(0 0 0 / 0)' })).toHaveLength(2);
   });
 
-  it('border: the style and color of the first drawn side, none when no side is drawn', () => {
+  it('border: the width of every side as a shorthand, the style and color of the first drawn side, none when no side is drawn', () => {
     const bottom = { 'border-bottom-width': '2px', 'border-bottom-style': 'dashed', 'border-bottom-color': 'rgb(165, 180, 252)' };
-    expect(rows(bottom)[2]).toEqual(['border-style  dashed', 'border-color  #A5B4FC']);
+    expect(rows(bottom)[2]).toEqual(['border-width  0 0 2px', 'border-style  dashed', 'border-color  #A5B4FC']);
+    const all = { 'border-top-width': '1.5px', 'border-right-width': '1.5px', 'border-bottom-width': '1.5px', 'border-left-width': '1.5px' };
+    expect(rows(all)[2]?.[0]).toBe('border-width  1.5px');
     // a reset like Tailwind's `border: 0 solid` on every element
     expect(rows({ 'border-top-style': 'solid', 'border-left-style': 'solid' })).toHaveLength(2);
   });

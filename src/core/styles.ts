@@ -145,7 +145,13 @@ export function styleRows(c: Computed): StyleRow[][] {
   // computed width is 0 when the style is none, so a drawn side is one with a width.
   // shortcut: one style and color for the whole border (the first drawn side, like Copy); show each side once mixed borders matter.
   const side = (['top', 'right', 'bottom', 'left'] as const).find((s) => parseFloat(c[`border-${s}-width`]) > 0);
-  const border = side ? [row('border-style', c[`border-${side}-style`]), colorRow('border-color', c[`border-${side}-color`])] : [];
+  const width = shorthand({
+    top: parseFloat(c['border-top-width']),
+    right: parseFloat(c['border-right-width']),
+    bottom: parseFloat(c['border-bottom-width']),
+    left: parseFloat(c['border-left-width']),
+  });
+  const border = side ? [row('border-width', width), row('border-style', c[`border-${side}-style`]), colorRow('border-color', c[`border-${side}-color`])] : [];
   const effects = [...shadowRows('box-shadow', c['box-shadow']), ...changed('filter'), ...changed('backdrop-filter'), ...changed('transform')];
   return [layout, text, fill, border, effects, marginRows(c.margin)].filter((group) => group.length > 0);
 }
