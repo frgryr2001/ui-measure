@@ -6,6 +6,8 @@ const PURPLE = '#a855f7';
 const GREEN = '#16a34a';
 const DASH = '4 3';
 const SHADOW = '0 4px 12px rgb(0 0 0 / 0.3)';
+const DARK = 'rgb(24 24 27 / 0.92)';
+const LIGHT_TEXT = 'rgb(228 228 231)';
 
 export const theme = {
   font: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -27,12 +29,14 @@ export const theme = {
   /** Corner arcs and their `r` labels. */
   radius: { label: BLUE, arc: BLUE, arcWidth: 1.5 },
   hint: {
-    background: 'rgb(24 24 27 / 0.92)',
-    text: 'rgb(228 228 231)',
+    background: DARK,
+    text: LIGHT_TEXT,
     corner: 8,
     shadow: SHADOW,
     key: { background: 'rgb(255 255 255 / 0.18)', text: '#fff', corner: 4 },
   },
+  /** The Styles panel, in the Hint's look: `name` the property, `text` its value; `swatch` rings a color's swatch so a dark one shows. */
+  styles: { background: DARK, text: LIGHT_TEXT, name: 'rgb(161 161 170)', corner: 8, shadow: SHADOW, swatch: 'rgb(255 255 255 / 0.4)' },
   /** The toolbar icon's ON badge. */
   badge: RED,
 };

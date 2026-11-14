@@ -4,6 +4,7 @@ import { HINT_GAP, HINT_PAD_X, KEY_PAD_X, type PlacedHint } from '../core/hint';
 import { FONT_SIZE } from '../core/labels';
 import { mid, type Connector, type Segment } from '../core/measure';
 import { height, ring, width, type Rect } from '../core/rect';
+import { STYLES_GROUP_GAP, STYLES_PAD_X, STYLES_PAD_Y, STYLES_ROW_H, STYLES_SWATCH, STYLES_SWATCH_GAP } from '../core/styles';
 import type { Frame, LabelKind, PlacedLabel } from './controller';
 import { theme } from './theme';
 
@@ -135,8 +136,47 @@ const Hint = ({ hint: { box, parts } }: { hint: PlacedHint }) => (
   </div>
 );
 
+const SWATCH_STYLE: CSSProperties = { display: 'inline-block', width: STYLES_SWATCH, height: STYLES_SWATCH, marginRight: STYLES_SWATCH_GAP, borderRadius: 2, boxShadow: `inset 0 0 0 1px ${theme.styles.swatch}`, verticalAlign: '-1px' };
+
+// display-only like the Hint, at the box the controller sized; each row's text is exactly `name  value` (e2e reads it)
+const Styles = ({ styles: { box, groups } }: { styles: NonNullable<Frame['styles']> }) => (
+  <div
+    data-styles=""
+    style={{
+      all: 'initial',
+      position: 'fixed',
+      left: box.left,
+      top: box.top,
+      width: width(box),
+      height: height(box),
+      boxSizing: 'border-box',
+      padding: `${STYLES_PAD_Y}px ${STYLES_PAD_X}px`,
+      borderRadius: theme.styles.corner,
+      background: theme.styles.background,
+      boxShadow: theme.styles.shadow,
+      color: theme.styles.text,
+      font: `${FONT_SIZE}px/${STYLES_ROW_H}px ${theme.font}`,
+      whiteSpace: 'pre',
+      overflow: 'hidden',
+      pointerEvents: 'none',
+    }}
+  >
+    {groups.map((rows, g) => (
+      <div key={g} style={{ display: 'block', marginTop: g > 0 ? STYLES_GROUP_GAP : 0 }}>
+        {rows.map((r, i) => (
+          <div key={i} data-style-row="" style={{ display: 'block', height: STYLES_ROW_H }}>
+            <span style={{ color: theme.styles.name }}>{`${r.name}  `}</span>
+            {r.color && <span data-swatch="" style={{ ...SWATCH_STYLE, background: r.color }} />}
+            {r.value}
+          </div>
+        ))}
+      </div>
+    ))}
+  </div>
+);
+
 export function Overlay({ frame }: { frame: Frame }) {
-  const { hover, hoverTouch, selected, selection, measuring, measurement, gaps, labels, details, hint } = frame;
+  const { hover, hoverTouch, selected, selection, measuring, measurement, gaps, labels, details, hint, styles } = frame;
   return (
     <>
       <svg
@@ -200,6 +240,7 @@ export function Overlay({ frame }: { frame: Frame }) {
           {labels.map((l, i) => <Label key={i} l={l} />)}
         </g>
       </svg>
+      {styles && <Styles styles={styles} />}
       {hint && <Hint hint={hint} />}
     </>
   );

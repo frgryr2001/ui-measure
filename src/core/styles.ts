@@ -1,4 +1,5 @@
-import { formatPx } from './rect';
+import { APART, CHAR_W } from './labels';
+import { formatPx, type Rect } from './rect';
 import { shorthand } from './spec';
 
 /**
@@ -147,4 +148,42 @@ export function styleRows(c: Computed): StyleRow[][] {
   const border = side ? [row('border-style', c[`border-${side}-style`]), colorRow('border-color', c[`border-${side}-color`])] : [];
   const effects = [...shadowRows('box-shadow', c['box-shadow']), ...changed('filter'), ...changed('backdrop-filter'), ...changed('transform')];
   return [layout, text, fill, border, effects, marginRows(c.margin)].filter((group) => group.length > 0);
+}
+
+// panel layout, in the same 11px monospace estimate as labels (Overlay draws it with these numbers)
+export const STYLES_PAD_X = 10;
+export const STYLES_PAD_Y = 8;
+export const STYLES_ROW_H = 16;
+export const STYLES_GROUP_GAP = 8;
+export const STYLES_SWATCH = 9;
+export const STYLES_SWATCH_GAP = 5;
+/** Space between the selection bounds and the panel. */
+export const STYLES_OFFSET = 8;
+
+/** The panel's size for `styleRows` groups: the longest `name  value` row (a swatch before a color), rows and the gaps between groups. */
+export function stylesSize(groups: StyleRow[][]): { w: number; h: number } {
+  const rows = groups.flat();
+  const widest = Math.max(0, ...rows.map((r) => (r.name.length + 2 + r.value.length) * CHAR_W + (r.color ? STYLES_SWATCH + STYLES_SWATCH_GAP : 0)));
+  return { w: 2 * STYLES_PAD_X + widest, h: 2 * STYLES_PAD_Y + rows.length * STYLES_ROW_H + STYLES_GROUP_GAP * Math.max(0, groups.length - 1) };
+}
+
+/**
+ * The panel's box, anchored to the selection bounds `sel`: below, above, right, then left, the first side where it
+ * fits the viewport (APART in) without covering `sel`, kept inside along the other axis. Else the bottom-right corner
+ * (a selection filling the viewport), and the top-left corner wins in a viewport smaller than the panel.
+ */
+export function placeStyles(sel: Rect, w: number, h: number, viewport: Rect): Rect {
+  const lo = { x: viewport.left + APART, y: viewport.top + APART };
+  const hi = { x: viewport.right - APART - w, y: viewport.bottom - APART - h };
+  const box = (left: number, top: number): Rect => ({ left, top, right: left + w, bottom: top + h });
+  const x = Math.max(Math.min(sel.left, hi.x), lo.x);
+  const y = Math.max(Math.min(sel.top, hi.y), lo.y);
+  const sides: [number, number][] = [
+    [x, sel.bottom + STYLES_OFFSET],
+    [x, sel.top - STYLES_OFFSET - h],
+    [sel.right + STYLES_OFFSET, y],
+    [sel.left - STYLES_OFFSET - w, y],
+  ];
+  const [left, top] = sides.find(([l, t]) => l >= lo.x && l <= hi.x && t >= lo.y && t <= hi.y) ?? [Math.max(hi.x, lo.x), Math.max(hi.y, lo.y)];
+  return box(left, top);
 }

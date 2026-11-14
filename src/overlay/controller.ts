@@ -1,5 +1,5 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
+import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStyles, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
@@ -7,6 +7,7 @@ import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
+import { placeStyles, styleRows, stylesSize, type StyleRow } from '../core/styles';
 import { copyText } from './clipboard';
 
 declare global {
@@ -55,6 +56,8 @@ export type Frame = {
   } | null;
   /** The Hint at the pointer; null while measuring or with the pointer outside this frame. */
   hint: PlacedHint | null;
+  /** `I`: the last-selected element's Styles, in groups, next to the selection (below, above, beside, else a corner); null when closed or measuring. */
+  styles: { box: Rect; groups: StyleRow[][] } | null;
 };
 
 const TOAST_MS = 1500;
@@ -87,6 +90,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   const mac = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform);
   // `B`: annotates the last-selected element's subtree until B or Esc; follows the selection
   let blueprint = false;
+  // `I`: the Styles panel of the last-selected element, until I or Esc; closes with the selection
+  let styles = false;
   // in click order: the last one is what Copy and Blueprint describe
   let selected: Element[] = [];
   // box the last plain click picked (`boxAt`), null after Shift+click or Esc; while set, the selection is it or a box it climbed to
@@ -164,6 +169,13 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       blueprint = !blueprint;
       return;
     }
+    if (e.code === 'KeyI' && selected.length > 0 && isBareKeydown(e)) {
+      if (isTypingInPage(host, shadowOf)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      styles = !styles;
+      return;
+    }
     // Copy: the last-selected element's spec as CSS
     const from = selected.at(-1);
     if (e.code === 'KeyC' && from && isBareKeydown(e)) {
@@ -179,8 +191,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (e.key === 'Escape' && e.type === 'keydown' && !e.repeat) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      // while measuring the blueprint is hidden, so Esc skips it
-      if (blueprint && !alt) blueprint = false;
+      // while measuring Styles and the blueprint are hidden, so Esc skips them
+      if (styles && !alt) styles = false;
+      else if (blueprint && !alt) blueprint = false;
       else if (selected.length > 0) {
         selected = [];
         lastHit = null;
@@ -201,7 +214,10 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const ms = now - lastFrame;
     lastFrame = now;
     selected = selected.filter((el) => el.isConnected);
-    if (selected.length === 0) blueprint = false;
+    if (selected.length === 0) {
+      blueprint = false;
+      styles = false;
+    }
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
     // read every frame: browser zoom and moving the window to another display change it
     const dpr = window.devicePixelRatio;
@@ -318,7 +334,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away));
     }
     const one = climbsFrom(target);
-    const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
+    // Esc closes Styles first, so the Hint names that
+    const hintState: HintState = styles ? { kind: 'styles' } : blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
     const parts = hintParts(hintState, mac);
     const hint = pointer && !measuring ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
     // a one-line control's words: labels may sit in its padding, never on the text
@@ -330,7 +347,14 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       }),
       ...(shownHover ? words(shownHover.border, shownHover.content) : []),
     ];
-    const placed = placeLabels(labels, viewport, anchors, hint ? [hint.box] : [], clear);
+    const stylesOf = !measuring && styles ? selected.at(-1) : undefined;
+    const groups = stylesOf ? styleRows(readStyles(stylesOf)) : [];
+    const size = stylesSize(groups);
+    // anchored to the drawn selection, so it glides with it
+    const panel = stylesOf && shownSel ? { box: placeStyles(shownSel, size.w, size.h, viewport), groups } : null;
+    // labels move out of the panel's way like the Hint's.
+    // shortcut: the Hint may cover the panel and a value under the panel hides rather than leads away, as under the Hint; move the Hint off the panel or let values lead away if either gets in the way
+    const placed = placeLabels(labels, viewport, anchors, [...(hint ? [hint.box] : []), ...(panel ? [panel.box] : [])], clear);
     // a gliding label sweeps across others: keep the spots from before, or they'd stay where it pushed them
     if (!glideHover.moving && !glideSelection.moving) anchors = placed.anchors;
 
@@ -352,6 +376,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
         corners: corners.filter((c) => c.radii.some(rounded)).map(({ box, radii }) => ({ box, radii })),
       } : null,
       hint,
+      styles: panel,
     };
     const key = JSON.stringify(frame);
     if (key !== last) {

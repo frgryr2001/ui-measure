@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULTS, styleRows, type Computed } from './styles';
+import type { Rect } from './rect';
+import { DEFAULTS, STYLES_OFFSET, placeStyles, styleRows, stylesSize, type Computed } from './styles';
 
 // a bare <div> in Chrome 148, plus overrides
 const of = (over: Partial<Computed>): Computed => ({ ...DEFAULTS, ...over });
@@ -88,5 +89,50 @@ describe('styleRows', () => {
 
   it('a background image shows its value', () => {
     expect(rows({ 'background-image': 'url("a.png")' })[2]).toEqual(['background-image  url("a.png")']);
+  });
+});
+
+describe('stylesSize', () => {
+  it('the longest row in 6.6px characters, a swatch before a color, rows and group gaps, padding', () => {
+    const groups = [
+      [{ name: 'display', value: 'block', color: null }],
+      [{ name: 'color', value: '#000000', color: 'rgb(0, 0, 0)' }, { name: 'font-size', value: '16px', color: null }],
+    ];
+    // 10 + max(15 * 6.6, 14 * 6.6 + 9 + 5) + 10; 8 + 3 * 16 + 8 + 8
+    expect(stylesSize(groups)).toEqual({ w: expect.closeTo(126.4), h: 72 });
+  });
+});
+
+describe('placeStyles', () => {
+  const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
+  const W = 200;
+  const H = 100;
+  const sel = (left: number, top: number, right: number, bottom: number): Rect => ({ left, top, right, bottom });
+
+  it('below the selection, left-aligned with it', () => {
+    expect(placeStyles(sel(100, 100, 300, 200), W, H, VP)).toEqual({ left: 100, top: 200 + STYLES_OFFSET, right: 300, bottom: 200 + STYLES_OFFSET + H });
+  });
+
+  it('above when there is no room below', () => {
+    expect(placeStyles(sel(100, 300, 300, 550), W, H, VP)).toMatchObject({ left: 100, bottom: 300 - STYLES_OFFSET });
+  });
+
+  it('beside, right first, when neither below nor above fits', () => {
+    expect(placeStyles(sel(100, 50, 300, 550), W, H, VP)).toMatchObject({ left: 300 + STYLES_OFFSET, top: 50 });
+    expect(placeStyles(sel(500, 50, 700, 550), W, H, VP)).toMatchObject({ right: 500 - STYLES_OFFSET, top: 50 });
+  });
+
+  it('a corner when the selection fills the viewport', () => {
+    expect(placeStyles(sel(-10, -10, 810, 610), W, H, VP)).toEqual({ left: 596, top: 496, right: 796, bottom: 596 });
+  });
+
+  it('kept inside the viewport along the free axis', () => {
+    // wider than its room to the right: pushed left; scrolled half off the top: beside it, from the top edge
+    expect(placeStyles(sel(700, 100, 780, 200), W, H, VP)).toMatchObject({ left: 596, top: 208 });
+    expect(placeStyles(sel(100, -300, 300, 580), W, H, VP)).toMatchObject({ left: 308, top: 4 });
+  });
+
+  it('a viewport smaller than the panel keeps its top-left corner on screen', () => {
+    expect(placeStyles(sel(0, 0, 50, 50), W, H, { left: 0, top: 0, right: 100, bottom: 60 })).toMatchObject({ left: 4, top: 4 });
   });
 });

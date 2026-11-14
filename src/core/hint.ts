@@ -6,7 +6,9 @@ export type HintState =
   | { kind: 'idle' }
   /** `climbs`: a click at the pointer would select the parent (see the controller's click rule). */
   | { kind: 'selection'; climbs: boolean }
-  | { kind: 'blueprint' };
+  | { kind: 'blueprint' }
+  /** Styles open: `I` or `Esc` closes it first, also in Blueprint. */
+  | { kind: 'styles' };
 
 export type HintPart = { kind: 'key' | 'text'; text: string };
 export type PlacedHint = { box: Rect; parts: HintPart[] };
@@ -25,11 +27,13 @@ export function hintParts(state: HintState, mac: boolean): HintPart[] {
       return [key('Click'), text('to select')];
     case 'selection':
       return [
-        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'),
+        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'), DOT, key('I'), text('styles'),
         ...(state.climbs ? [DOT, key('Click'), text('again → parent')] : []),
       ];
     case 'blueprint':
-      return [key('B'), text('/'), key('Esc'), text('to exit')];
+      return [key('B'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles')];
+    case 'styles':
+      return [key('I'), text('/'), key('Esc'), text('to close')];
     default: {
       const _exhaustive: never = state;
       return _exhaustive;

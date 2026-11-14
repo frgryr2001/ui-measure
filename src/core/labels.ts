@@ -64,8 +64,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  * off placed leaders. A label with no free spot is hidden. `taken`: boxes placed before every label (the Hint),
  * which labels move out of the way of; a label whose near spots are blocked only by them is hidden, not led away,
  * so the moving Hint never sends values onto leaders. `clear`: boxes whose words stay readable (a one-line
- * control). A spot on one is skipped, and the label may still move onto a leader; the Hint is the only obstacle
- * that hides a value instead.
+ * control). A spot on one is skipped, and the label may still move onto a leader; the Hint and the Styles panel
+ * (`taken`) are the only obstacles that hide a value instead.
  */
 export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors, taken: Rect[] = [], clear: Rect[] = []): { shown: (L & { box: Rect; leader?: Leader })[]; anchors: Anchors } {
   // uniform grid of placed boxes and leaders, so each test only looks at nearby ones

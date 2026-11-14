@@ -169,20 +169,32 @@ try {
       const kids = [...h.children].map((c) => c.getBoundingClientRect());
       return { text: [...h.children].map((c) => c.textContent).join(' '), box: [r.x, r.y, r.width, r.height], vw: innerWidth, vh: innerHeight, used: kids.at(-1).right - kids[0].left };
     })()`);
-  // label collision: every pair of visible label boxes and the hint must be 4px apart (labels.ts APART)
+  // the Styles panel: its box and the text of each row (`name  value`), null while closed
+  const stylesOf = () =>
+    evaluate(page, `(() => {
+      const p = document.querySelector('ui-measure-root')?.shadowRoot?.querySelector('[data-styles]');
+      if (!p) return null;
+      const r = p.getBoundingClientRect();
+      return { box: [r.x, r.y, r.width, r.height], rows: [...p.querySelectorAll('[data-style-row]')].map((row) => row.textContent), swatches: p.querySelectorAll('[data-swatch]').length, vw: innerWidth, vh: innerHeight };
+    })()`);
+  // label collision: every pair of visible label boxes, the hint and the Styles panel must be 4px apart (labels.ts APART);
+  // the Hint and the panel may overlap each other, as nothing moves either out of the other's way
   const assertLabelsApart = async (what) => {
     const boxes = await evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label]')]
       .map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)))`);
+    const labelCount = boxes.length;
     const hint = await hintOf();
     if (hint) boxes.push(hint.box);
+    const panel = await stylesOf();
+    if (panel) boxes.push(panel.box);
     const g = 3.9; // 4px, less float error
-    const pairs = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) => a[0] < b[0] + b[2] + g && b[0] < a[0] + a[2] + g && a[1] < b[1] + b[3] + g && b[1] < a[1] + a[3] + g).map((b) => [a, b]));
+    const pairs = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b, j) => (i < labelCount || i + 1 + j < labelCount) && a[0] < b[0] + b[2] + g && b[0] < a[0] + a[2] + g && a[1] < b[1] + b[3] + g && b[1] < a[1] + a[3] + g).map((b) => [a, b]));
     assert.deepEqual(pairs, [], `labels overlap: ${what}`);
     return boxes.length;
   };
   const a = await center('.row .tile:nth-child(1)');
   const b = await center('.row .tile:nth-child(2)');
-  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children`;
+  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children · I styles`;
   await mouse('mouseMoved', a);
   await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
   const labelChrome = await evaluate(page, `(() => {
@@ -497,7 +509,7 @@ try {
   await pressB();
   // row, avatar, merged tile (3 same-size boxes → 1), text, pill; the display:none child is skipped
   bp = await poll('blueprint of #bp-card', blueprint, (o) => o.boxes === 5 && o.hatch);
-  await poll('hint in Blueprint', hintOf, (h) => h?.text === 'B / Esc to exit');
+  await poll('hint in Blueprint', hintOf, (h) => h?.text === 'B / Esc to exit · I styles');
   assert.ok(bp.labels.includes('r 20') && bp.labels.includes('20') && bp.labels.includes('24'), `card radius and padding labels: ${JSON.stringify(bp.labels)}`);
   assert.equal(bp.labels.filter((t) => t === 'r 20').length, 1, `B adds descendants, the root's labels once: ${JSON.stringify(bp.labels)}`);
   await assertLabelsApart('blueprint of #bp-card');
@@ -527,6 +539,74 @@ try {
   await pressB();
   await poll('B toggles off', blueprint, (o) => o.boxes === null);
   console.log('ok  B ignored while typing / composing; Esc and B return to the selection');
+
+  // Styles: I opens the last-selected element's computed CSS beside it; Esc closes it before Blueprint
+  const pressI = () => press('i', 'KeyI', 73, 'i');
+  await press('Escape', 'Escape', 27);
+  await evaluate(page, `document.querySelector('#styles-card').scrollIntoView({ block: 'start' })`);
+  await select(await center('#styles-card'));
+  // the pointer away from the card and the panel, so the Hint covers neither
+  await mouse('mouseMoved', { x: 8, y: 8 });
+  await poll('the Hint offers I styles', hintOf, (h) => h?.text === SELECTION_HINT);
+  await pressI();
+  let panel = await poll('I opens Styles', stylesOf, Boolean);
+  for (const want of ['font-family  Georgia', 'font-size  14px / 20px', 'font-weight  600', 'color  #1E293B', 'background-color  #6366F1 50%', 'box-shadow  0 4 12 0 #000000 25%', 'margin  0 0 16px']) {
+    assert.ok(panel.rows.includes(want), `Styles row ${want}: ${JSON.stringify(panel.rows)}`);
+  }
+  assert.equal(panel.swatches, 3, `a swatch before each color (color, background, shadow): ${JSON.stringify(panel.rows)}`);
+  await poll('the Hint names I / Esc to close', hintOf, (h) => h?.text === 'I / Esc to close');
+  // 8px off the card: below at the top of the viewport, above at the bottom, beside in the middle of the short e2e viewport
+  const inside = (p) => p.box[0] >= 0 && p.box[1] >= 0 && p.box[0] + p.box[2] <= p.vw && p.box[1] + p.box[3] <= p.vh;
+  const placements = [
+    ['start', 'below', (p, c) => Math.round(p.box[1] - c.bottom) === 8 && Math.round(p.box[0]) === Math.round(c.left)],
+    ['end', 'above', (p, c) => Math.round(c.top - (p.box[1] + p.box[3])) === 8 && Math.round(p.box[0]) === Math.round(c.left)],
+    ['center', 'beside', (p, c) => Math.round(p.box[0] - c.right) === 8 && Math.round(p.box[1]) === Math.round(c.top)],
+  ];
+  for (const [block, side, ok] of placements) {
+    await evaluate(page, `document.querySelector('#styles-card').scrollIntoView({ block: '${block}' })`);
+    const o = await poll(`Styles ${side} the card`, async () => ({ p: await stylesOf(), c: await evaluate(page, `document.querySelector('#styles-card').getBoundingClientRect().toJSON()`) }), (o) => o.p && ok(o.p, o.c));
+    assert.ok(inside(o.p), `panel ${side} the card, in the viewport: ${JSON.stringify(o.p)}`);
+    await assertLabelsApart(`Styles ${side} #styles-card`);
+  }
+  // typing and IME composition keep it
+  await evaluate(page, `document.querySelector('input').focus({ preventScroll: true })`);
+  await pressI();
+  await evaluate(page, 'document.activeElement.blur()');
+  await evaluate(page, `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', isComposing: true }))`);
+  // typing scrolled the input into view
+  await evaluate(page, `document.querySelector('#styles-card').scrollIntoView({ block: 'center' })`);
+  await sleep(100);
+  assert.ok(await stylesOf(), 'I while typing / composing must not close Styles');
+  // hidden while measuring, back on Alt release
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+  await mouse('mouseMoved', { x: 8, y: 8 }, 1);
+  await poll('Styles hidden while measuring', stylesOf, (p) => p === null);
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  await poll('Styles back on Alt release', stylesOf, Boolean);
+  // with Blueprint (the card has no child boxes: the Hint tells Blueprint is on): Esc closes Styles first, then Blueprint
+  await pressB();
+  await sleep(100);
+  assert.ok(await stylesOf(), 'Styles shown with Blueprint');
+  await assertLabelsApart('Styles with Blueprint');
+  await press('Escape', 'Escape', 27);
+  await poll('Esc closes Styles, Blueprint stays', async () => ({ p: await stylesOf(), hint: (await hintOf())?.text }), (o) => o.p === null && o.hint === 'B / Esc to exit · I styles');
+  await pressI();
+  await poll('I opens Styles again', stylesOf, Boolean);
+  await pressI();
+  await poll('I closes Styles', stylesOf, (p) => p === null);
+  await pressB();
+  // clearing the selection closes it: it stays closed on the next selection
+  await pressI();
+  await poll('Styles open before clearing', stylesOf, Boolean);
+  const cardCenter = await center('#styles-card');
+  await mouse('mouseMoved', cardCenter);
+  await mouse('mousePressed', cardCenter, SHIFT);
+  await mouse('mouseReleased', cardCenter, SHIFT);
+  await poll('Shift+click out of the selection closes Styles', async () => ({ p: await stylesOf(), sel: (await outlines()).selected.length }), (o) => o.p === null && o.sel === 0);
+  await select(cardCenter);
+  await sleep(100);
+  assert.equal(await stylesOf(), null, 'a new selection starts with Styles closed');
+  console.log('ok  I → Styles of #styles-card (hex + %, shadow, margin, font) below / above / beside it; Hint; ignored while typing / composing; hidden while measuring; with Blueprint; Esc closes it first; gone with the selection');
 
   // load: 481 nodes in view, capped at 400; frame time while scrolling 1px per frame
   await evaluate(page, `document.querySelector('#bp-many').scrollIntoView({ block: 'center' })`);

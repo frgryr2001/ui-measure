@@ -48,7 +48,7 @@ The empty distance between consecutive children of one container, whatever makes
 What Copy (`C`) writes for the last-selected element as CSS: a selector that finds it again, its bounds' W × H (border box), padding, border and corner radius.
 
 **Styles**
-`I` with a selection: the computed CSS of the last-selected element that the overlay does not draw (display and layout, font and color, fill, border, shadow and other effects, margin): display, the font and color always, the rest only where it differs from the default, in a panel beside the selection. It is the one place a margin has numbers. `I` or `Esc` closes it; hidden while measuring; shown alongside Blueprint.
+`I` with a selection: the computed CSS of the last-selected element that the overlay does not draw (display and layout, font and color, fill, border, shadow and other effects, margin): display, the font and color always, the rest only where it differs from the default, in a panel next to the selection (below, above, beside, else a corner). It is the one place a margin has numbers. `I` or `Esc` closes it; hidden while measuring; shown alongside Blueprint.
 _Avoid_: info, tooltip (that is the Hint), inspector
 
 **Blueprint**
