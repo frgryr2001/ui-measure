@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gaps } from './gap';
+import { gapFlow, gaps } from './gap';
 import { touchLimit } from './measure';
 import type { Rect } from './rect';
 
@@ -86,5 +86,39 @@ describe('gaps', () => {
   it('no items or one item: no gaps', () => {
     expect(gaps([], 'x', true, T)).toEqual([]);
     expect(gaps([box(0, 0, 10, 10)], 'y', false, T)).toEqual([]);
+  });
+});
+
+describe('gapFlow + gaps (which containers get gaps)', () => {
+  const style = { display: 'block', flexDirection: 'row', flexWrap: 'nowrap', text: false };
+  const of = (s: Partial<typeof style>, items: Rect[]) => {
+    const flow = gapFlow({ ...style, ...s });
+    return flow ? gaps(items, flow.main, flow.wrap, T).map((g) => [g.axis, g.value]) : null;
+  };
+
+  it('a block container: stacked blocks give vertical gaps (margins between them)', () => {
+    expect(of({}, [box(0, 0, 300, 40), box(0, 56, 300, 40), box(40, 112, 260, 40)])).toEqual([['y', 16], ['y', 16]]);
+  });
+
+  it('inline-blocks on one line give horizontal gaps, the whitespace between them included', () => {
+    // two 60px inline-blocks with margin-left 8 and a ~4px space; a third wraps onto the next line
+    expect(of({ display: 'inline-block' }, [box(0, 0, 60, 20), box(72, 0, 60, 20), box(0, 24, 60, 20)])).toEqual([['x', 12], ['y', 4]]);
+  });
+
+  it('a block container with direct text gets no gaps: a gap line would span the text', () => {
+    expect(of({ text: true }, [box(0, 0, 40, 20), box(80, 0, 40, 20)])).toBeNull();
+    expect(of({ display: 'list-item', text: true }, [])).toBeNull();
+  });
+
+  it('flow-root and list-item are block containers too; inline, table and contents get none', () => {
+    const stacked = [box(0, 0, 100, 20), box(0, 30, 100, 20)];
+    expect([of({ display: 'flow-root' }, stacked), of({ display: 'list-item' }, stacked)]).toEqual([[['y', 10]], [['y', 10]]]);
+    for (const display of ['inline', 'table', 'table-cell', 'contents', 'none']) expect(of({ display }, stacked)).toBeNull();
+  });
+
+  it('flex and grid keep their flow, direct text or not', () => {
+    expect(gapFlow({ ...style, display: 'inline-flex', flexDirection: 'column-reverse', flexWrap: 'wrap', text: true })).toEqual({ main: 'y', wrap: true });
+    expect(gapFlow({ ...style, display: 'flex' })).toEqual({ main: 'x', wrap: false });
+    expect(gapFlow({ ...style, display: 'grid' })).toEqual({ main: 'x', wrap: true });
   });
 });

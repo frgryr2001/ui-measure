@@ -90,7 +90,7 @@ async function evaluate(sessionId, expression) {
 const timer = setTimeout(() => {
   console.error('e2e: overall timeout');
   process.exit(1);
-}, 90_000);
+}, 150_000);
 
 try {
   const { id: extId } = await send('Extensions.loadUnpacked', { path: extDir });
@@ -268,6 +268,7 @@ try {
   await expectSelected('Shift+click again removes it', [tile(1)]);
   assert.deepEqual((await outlines()).union, [], 'no union outline for one element');
 
+
   // gaps of a flex / grid container: click a child twice to select the container, read the purple labels
   const gapLabels = () =>
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label="gap"] + text')].map((t) => t.textContent)`);
@@ -323,6 +324,133 @@ try {
     await mouse('mouseMoved', p, 0, session);
     await click(p, 0, session);
   };
+
+  // same-size wrappers: a click picks the box Blueprint keeps; same-size boxes share an outline, so the details tell them apart
+  const labelTexts = () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label] + text')].map((t) => t.textContent)`);
+  await press('Escape', 'Escape', 27);
+  await evaluate(page, `document.querySelector('#wrap-chain').scrollIntoView({ block: 'center' })`);
+  const rowSpot = await corner('#wrap-row-inner', 400, 30); // right of the text: the plain inner row is the deepest element
+  await select(rowSpot);
+  await expectSelected('click on the plain row selects its rounded same-size parent', ['#wrap-row']);
+  await poll('the parent\'s radius shows', labelTexts, (l) => l.includes('r 12'));
+  await click(rowSpot);
+  await expectSelected('click again → the next box that is larger', ['#wrap-chain']);
+  const chainSpot = await corner('#chain-9', 4, 4); // in the padding of the innermost box
+  // the Hint at the pointer would cover the small box's values: click, then wait to the right of it
+  const clickChain = async () => {
+    await mouse('mouseMoved', chainSpot);
+    await click(chainSpot);
+    await mouse('mouseMoved', { x: chainSpot.x + 300, y: chainSpot.y });
+  };
+  await clickChain();
+  await poll('10-deep chain: the padded innermost box', labelTexts, (l) => l.includes('8') && l.includes('12') && !l.includes('r 8'));
+  await expectSelected('10-deep chain: one outline', ['#chain-9']);
+  await clickChain();
+  await poll('click again → the rounded outer box, same outline', labelTexts, (l) => l.includes('r 8') && !l.includes('12'));
+  await expectSelected('10-deep chain: the outer box has the same outline', ['#chain-0']);
+  await clickChain();
+  await expectSelected('click again → past the chain', ['#wrap-chain']);
+  await press('Escape', 'Escape', 27);
+  await click(rowSpot, SHIFT);
+  await poll('Shift+click follows the same rule', labelTexts, (l) => l.includes('440 × 60'));
+  await click(chainSpot, SHIFT);
+  await expectSelected('Shift+click adds the padded chain box', ['#wrap-row', '#chain-9']);
+  await press('Escape', 'Escape', 27);
+  await select(rowSpot);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+  await mouse('mouseMoved', chainSpot, 1);
+  await poll('Alt-measure from the row to the chain: the grid gap 12', overlay, (o) => o.chip === '⌥ measuring' && o.lines === 1);
+  assert.ok((await labelTexts()).includes('12'), `measurement 12: ${JSON.stringify(await labelTexts())}`);
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  await press('Escape', 'Escape', 27);
+  console.log('ok  Shift+click picks the same boxes; Alt-measure from the row to the chain box: 12');
+
+  // block gaps: a block container's stacked children get gaps like a flex column; a paragraph's inline elements none
+  await evaluate(page, `document.querySelector('#bp-text').scrollIntoView({ block: 'center' })`);
+  const clickThenAway = async (p) => {
+    await select(p);
+    await mouse('mouseMoved', { x: p.x + 520, y: p.y }); // out of the Hint's way
+  };
+  await clickThenAway(await corner('#bp-text', 4, 4));
+  await poll('block gaps of the article: h3 → p 8, p → ul 12', gapLabels, (g) => JSON.stringify(g) === '["8","12"]');
+  await assertLabelsApart('block gaps of #bp-text');
+  await clickThenAway(await corner('#bp-text-p', 6, 8));
+  await poll('the paragraph is selected', labelTexts, (l) => l.some((t) => t.startsWith('456 × ')));
+  assert.deepEqual(await gapLabels(), [], 'a paragraph with direct text has no gaps');
+  await press('Escape', 'Escape', 27);
+  console.log('ok  block gaps: #bp-text 8 12 between its blocks, none inside a paragraph with inline elements');
+
+  // leaders: each with the label it ends on (the edge point nearest its target), its length, and the labels it crosses
+  const leaders = () =>
+    evaluate(page, `(() => {
+      const root = document.querySelector('ui-measure-root').shadowRoot;
+      const labels = [...root.querySelectorAll('[data-label]')].map((r) => ({ kind: r.dataset.label, text: r.nextElementSibling.textContent, b: ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)) }));
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      return [...root.querySelectorAll('[data-line="leader"]')].map((l) => {
+        const [x1, y1, x2, y2] = ['x1', 'y1', 'x2', 'y2'].map((a) => +l.getAttribute(a));
+        const own = labels.find(({ b: [x, y, w, h] }) => Math.abs(clamp(x1, x, x + w) - x2) < 0.01 && Math.abs(clamp(y1, y, y + h) - y2) < 0.01);
+        const inside = (px, py, [x, y, w, h]) => px > x + 0.5 && px < x + w - 0.5 && py > y + 0.5 && py < y + h - 0.5;
+        const crossed = labels.filter((o) => o !== own && Array.from({ length: 19 }, (_, i) => (i + 1) / 20).some((t) => inside(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, o.b)));
+        return { kind: own?.kind ?? null, text: own?.text ?? null, at: [x1, y1].map(Math.round).join(), box: own?.b.map(Math.round).join() ?? null, length: Math.hypot(x2 - x1, y2 - y1), crossed: crossed.map((o) => o.text) };
+      });
+    })()`);
+  const assertLeaders = async (what) => {
+    const ls = await leaders();
+    for (const l of ls) {
+      assert.ok(['padding', 'gap', 'radius'].includes(l.kind), `${what}: a leader ends on a details value: ${JSON.stringify(l)}`);
+      assert.ok(l.length <= 40.01, `${what}: leader at most 40px: ${JSON.stringify(l)}`);
+      assert.deepEqual(l.crossed, [], `${what}: a leader crosses no label: ${JSON.stringify(l)}`);
+    }
+    return ls;
+  };
+  // the screenshot case: a row with side padding and radius keeps r 12 and both paddings
+  await evaluate(page, `document.querySelector('#leader-row').scrollIntoView({ block: 'center' })`);
+  await clickThenAway(await corner('#leader-row', 2, 30));
+  await poll('#leader-row: r 12 and both side paddings', labelTexts, (l) => l.includes('r 12') && l.filter((t) => t === '24').length === 2);
+  await assertLabelsApart('#leader-row');
+  await assertLeaders('#leader-row');
+  await press('Escape', 'Escape', 27);
+  // dense rounded, padded tags in Blueprint: values without room sit away on leaders
+  await evaluate(page, `document.querySelector('#leader-dense').scrollIntoView({ block: 'center' })`);
+  await clickThenAway(await corner('#leader-dense', 3, 20));
+  await pressB();
+  await poll('Blueprint of #leader-dense', blueprint, (o) => o.boxes === 48);
+  await assertLabelsApart('Blueprint of #leader-dense');
+  const dense = await assertLeaders('Blueprint of #leader-dense');
+  assert.ok(dense.some((l) => l.kind === 'radius') && dense.some((l) => l.kind === 'padding'), `radius and padding leaders in #leader-dense: ${JSON.stringify(dense)}`);
+  // R4: the Hint sweeping down the box's left edge must not make a led-away value hop between spots
+  const box = await evaluate(page, `(() => { const r = document.querySelector('#leader-dense').getBoundingClientRect(); return { left: r.left, top: r.top, bottom: r.bottom }; })()`);
+  await mouse('mouseMoved', { x: box.left - 60, y: box.top });
+  await sleep(200);
+  await evaluate(page, `(() => {
+    const root = document.querySelector('ui-measure-root').shadowRoot;
+    const seen = (window.__leaders = {});
+    const end = performance.now() + 400;
+    const sample = () => {
+      // per target: the spot it is on now and how often that changed (A → B → A counts 2)
+      for (const l of root.querySelectorAll('[data-line="leader"]')) {
+        const at = l.getAttribute('x1') + ',' + l.getAttribute('y1');
+        const spot = l.getAttribute('x2') + ',' + l.getAttribute('y2');
+        const s = (seen[at] ??= { spot, moves: 0 });
+        if (s.spot !== spot) Object.assign(s, { spot, moves: s.moves + 1 });
+      }
+      if (performance.now() < end) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  })()`);
+  for (let i = 1; i <= 8; i++) {
+    await mouse('mouseMoved', { x: box.left - 60, y: box.top + ((box.bottom - box.top) * i) / 8 });
+    await sleep(45);
+  }
+  await sleep(100);
+  assert.ok(await evaluate(page, 'Object.keys(window.__leaders).length > 0'), 'leaders sampled while the Hint moves');
+  const hops = await evaluate(page, `Object.entries(window.__leaders).filter(([, s]) => s.moves > 1)`);
+  assert.deepEqual(hops, [], 'a leader\'s label changes spot at most once while the Hint moves');
+  await assertLabelsApart('Blueprint of #leader-dense, Hint moved');
+  await assertLeaders('Blueprint of #leader-dense, Hint moved');
+  await press('Escape', 'Escape', 27);
+  await press('Escape', 'Escape', 27);
+  console.log(`ok  leaders: #leader-row keeps r 12 and both paddings; #leader-dense ${dense.length} leaders (radius + padding), each ≤ 40px, crossing no label; none hops while the Hint moves`);
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   // inside the card's top padding: the card itself is the deepest element there
   const cardPadding = await corner('#bp-card', 160, 8);
@@ -412,12 +540,48 @@ try {
       requestAnimationFrame(step);
     })`);
   const stats = (ms) => ({ median: ms[ms.length >> 1].toFixed(1), p95: ms[Math.floor(ms.length * 0.95)].toFixed(1) });
-  const withBlueprint = stats(await frameTimes());
+  // the rAF interval stays at 16.7 until a frame goes over budget; CPU per frame (script + layout + style, every world of the page) shows a slowdown that still fits
+  await send('Performance.enable', {}, page);
+  const busy = async () => {
+    const m = Object.fromEntries((await send('Performance.getMetrics', {}, page)).metrics.map((x) => [x.name, x.value]));
+    return m.ScriptDuration + m.LayoutDuration + m.RecalcStyleDuration;
+  };
+  const perf = async () => {
+    const before = await busy();
+    const ms = await frameTimes();
+    return { ...stats(ms), cpu: (((await busy()) - before) * 1000 / ms.length).toFixed(2) };
+  };
+  const perfOf = {};
+  const withBlueprint = (perfOf['bp-many'] = await perf());
   await pressB();
   await poll('blueprint off', blueprint, (o) => o.boxes === null);
   const without = stats(await frameTimes());
   console.log(`ok  #bp-many: 399 boxes + root, +81 hidden, ${n} labels apart; frame ms while scrolling, blueprint median ${withBlueprint.median} p95 ${withBlueprint.p95} vs off ${without.median} / ${without.p95}`);
   assert.ok(+withBlueprint.p95 < 34, 'blueprint of ~400 nodes must keep scrolling at least 30 fps');
+
+  // perf scenarios (ticket 20): Blueprint of blocks, details + Blueprint of dense tags, pointer still on a same-size chain, nothing selected
+  await press('Escape', 'Escape', 27);
+  for (const [id, at] of [['bp-blocks', [1, 20]], ['leader-dense', [3, 20]]]) {
+    // top 60px down, under the sticky header: #bp-blocks is taller than the viewport
+    await evaluate(page, `window.scrollBy(0, document.querySelector('#${id}').getBoundingClientRect().top - 60)`);
+    // a spot inside the box itself: left of the first card's margin, its left padding
+    const p = await evaluate(page, `(() => { const r = document.querySelector('#${id}').getBoundingClientRect(); return { x: r.left + ${at[0]}, y: r.top + ${at[1]} }; })()`);
+    await select(p);
+    await pressB();
+    await poll(`blueprint of #${id}`, blueprint, (o) => o.boxes > 40);
+    // stacked blocks and inline-block cards: vertical and horizontal block gaps
+    if (id === 'bp-blocks') await poll('block gap lines in the Blueprint of #bp-blocks', () => evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-line="gap"]').length`), (n) => n > 40);
+    perfOf[id] = await perf();
+    await press('Escape', 'Escape', 27);
+    await press('Escape', 'Escape', 27);
+  }
+  await evaluate(page, `document.querySelector('#chain-9').scrollIntoView({ block: 'center' })`);
+  await mouse('mouseMoved', await corner('#chain-9', 4, 4));
+  perfOf['wrap-chain hover'] = await perf();
+  await mouse('mouseMoved', await center('#bp-text-p'));
+  perfOf['nothing selected'] = await perf();
+  console.log(`ok  CPU ms per frame while scrolling: ${Object.entries(perfOf).map(([k, v]) => `${k} ${v.cpu} (rAF p95 ${v.p95})`).join(', ')}`);
+  for (const [k, v] of Object.entries(perfOf)) assert.ok(+v.cpu < 8 && +v.p95 < 34, `${k}: ${v.cpu} ms CPU per frame, p95 ${v.p95} ms (gate: < 8, < 34)`);
 
   // copy: C writes the last selection's spec; read back through this page, a secure origin
   await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });

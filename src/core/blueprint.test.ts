@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPS, classify, collect, radii, radiusLabels, type Corners, type Look } from './blueprint';
+import { CAPS, classify, collect, keptInChain, radii, radiusLabels, type Corners, type Look } from './blueprint';
 import type { Rect } from './rect';
 
 describe('radii', () => {
@@ -168,5 +168,35 @@ describe('radiusLabels', () => {
 
   it('no rounded corner: no label', () => {
     expect(texts([[0, 0], [0, 0], [0, 0], [0.9, 4]])).toEqual([]);
+  });
+});
+
+describe('keptInChain (click and hover on same-size wrappers)', () => {
+  // deepest first, as dom.ts reads it: `plain` = no padding, border or radius
+  const chain = (...links: [string, boolean][]) => keptInChain(links.map(([node, plain]) => ({ node, plain })));
+
+  it('a decorated wrapper absorbs its plain child: the click picks the wrapper', () => {
+    expect(chain(['row', true], ['rounded', false])).toEqual(['rounded']);
+  });
+
+  it('a decorated child replaces a plain wrapper', () => {
+    expect(chain(['btn', false], ['wrap', true])).toEqual(['btn']);
+  });
+
+  it('both decorated: both stay, the inner one first', () => {
+    expect(chain(['inner', false], ['outer', false])).toEqual(['inner', 'outer']);
+  });
+
+  it('both plain: the inner one, like Blueprint', () => {
+    expect(chain(['body', true], ['html', true])).toEqual(['body']);
+  });
+
+  it('a 10-deep chain, padding inside and radius outside: the padded box, then the rounded one', () => {
+    const plain = Array.from({ length: 8 }, (_, i): [string, boolean] => [`d${8 - i}`, true]);
+    expect(chain(['d9', false], ...plain, ['d0', false])).toEqual(['d9', 'd0']);
+  });
+
+  it('an element alone is kept', () => {
+    expect(chain(['el', true])).toEqual(['el']);
   });
 });

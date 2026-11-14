@@ -184,6 +184,40 @@
       </div>
     </section>
 
+    <section>
+      <h2>Same-size wrappers: the row's radius 12 sits on its parent, both 440 × 60 · a 10-deep same-size chain: radius 8 outside, padding 8 12 inside, 8 plain wrappers between · click picks the decorated box, click again the next box up</h2>
+      <div id="wrap-chain" style="display:grid;gap:12px;justify-items:start">
+        <div id="wrap-row" style="border-radius:12px;background:#e0e7ff"><div id="wrap-row-inner" style="width:440px;height:60px;display:flex;align-items:center"><span style="margin-left:24px">Row: radius on its same-size parent</span></div></div>
+        <div id="chain-0" style="border-radius:8px;background:#c7d2fe"><div><div><div><div><div><div><div><div><div id="chain-9" style="padding:8px 12px">10 deep</div></div></div></div></div></div></div></div></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Leaders: a 440 × 60 row, padding 0 24, radius 12 · 48 tags 48 × 28, padding 4 8, radius 6, gap 6: select the box, press B · a value with no room next to it gets a dashed leader</h2>
+      <div id="leader-row" style="width:440px;height:60px;padding:0 24px;border-radius:12px;background:#e0e7ff;display:flex;align-items:center;justify-content:space-between"><span>Row with side padding</span><span>›</span></div>
+      <div id="leader-dense" style="display:flex;flex-wrap:wrap;gap:6px;width:420px;margin-top:12px;padding:8px;border-radius:10px;background:#fff"></div>
+      <script>
+        document.querySelector('#leader-dense').innerHTML = '<div style="width:48px;height:28px;padding:4px 8px;border-radius:6px;background:#c7d2fe">Tag</div>'.repeat(48);
+      </script>
+    </section>
+
+    <section>
+      <h2>Block gaps in text: the article's blocks (h3 → p 8, p → ul 12) · none inside a paragraph with inline elements</h2>
+      <article id="bp-text" style="width:480px;padding:12px;background:#fff">
+        <h3 style="margin:0 0 8px">Heading</h3>
+        <p id="bp-text-p" style="margin:0 0 12px">A paragraph with <em>inline</em> and <strong>bold</strong> elements: no gap line across its text.</p>
+        <ul style="margin:0;padding-left:20px"><li>One</li><li>Two</li></ul>
+      </article>
+    </section>
+
+    <section>
+      <h2>Blueprint load, blocks: 40 inline-block cards × 10 nested blocks with margins and text = 400 nodes + the box</h2>
+      <div id="bp-blocks" style="width:640px"></div>
+      <script>
+        document.querySelector('#bp-blocks').innerHTML = '<div style="display:inline-block;vertical-align:top;width:100px;margin:2px;padding:4px;background:#fff"><h5 style="margin:0 0 4px">Card</h5><p style="margin:0">Short text</p><div style="margin-top:4px"><div><p style="margin:0 0 2px">Nested</p><p style="margin:0">Nested</p></div><div style="margin-top:2px"><span>a</span> <span>b</span></div></div></div>'.repeat(40);
+      </script>
+    </section>
+
     <div style="height:800px"></div>
   </main>
 </body>

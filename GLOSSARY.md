@@ -4,7 +4,7 @@
 The tool's ON state, scoped to one browser tab. Off by default; turning it on or off never affects other tabs.
 
 **Hint**
-The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, children (Blueprint), parent). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves.
+The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, children (Blueprint), parent). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
 
 **Bounds**
 The outer edge of an element's visible box (its border edge, after transforms). Every measurement is taken between bounds, never between padding or content edges.
@@ -13,13 +13,13 @@ The outer edge of an element's visible box (its border edge, after transforms). 
 The unit of every number the tool shows: the px you write in CSS. Browser zoom needs no correction (the page APIs already report CSS px). Inside CSS `zoom` a number is the rendered distance divided by the `currentCSSZoom` of the element it describes, or of the nearest element containing both boxes for a measurement, so a `zoom: 1.5` box with `width: 120px` reads 120, while outlines and bands are drawn on the rendered box. `transform: scale()` is the opposite: it does not change layout, so its numbers stay rendered (see Bounds).
 
 **Hover target**
-The deepest element under the pointer while measure mode is on.
+The box a click would select at the pointer while measure mode is on (see Selection).
 
 **Selection**
-The elements the user picked. Clicking picks the deepest element under the pointer, not its wrapper; `Shift`+click adds or removes one element. Clicking the one selected element again selects its parent, so a container its children cover is still reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
+The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper: among elements sharing its bounds, the one with padding, border or corner radius, the same one Blueprint keeps; `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up that Blueprint would keep, so a container its children cover is still reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
 
 **Details**
-The numbers of the one selected element, shown on select with no key: W × H, padding, corner radius and, for a flex / grid container, its gaps. Margins are drawn as a band without numbers (a distance to a neighbour is a measurement). Not shown for a multi-selection or while measuring; a hover target shows only its outline, W × H and bands.
+The numbers of the one selected element, shown on select with no key: W × H, padding, corner radius and, for a container, its gaps. Margins are drawn as a band without numbers (a distance to a neighbour is a measurement). Not shown for a multi-selection or while measuring; a hover target shows only its outline, W × H and bands.
 
 **Selection bounds**
 The union of the bounds of every selected element. Measurements are taken from it, so a multi-selection measures like one box. Drawn dashed with its own W × H when more than one element is selected.
@@ -42,11 +42,14 @@ _Avoid_: padding (padding is a CSS property; an inset is what we measure)
 The distance between same-side edges of two boxes that partly overlap along an axis.
 
 **Gap**
-The empty distance between consecutive children of one container. Not part of a measurement between two chosen elements.
+The empty distance between consecutive children of one container, whatever makes it (`gap`, margins, `justify-content`), in a flex, grid or block container alike. Not part of a measurement between two chosen elements.
 
 **Spec**
 What Copy (`C`) writes for the last-selected element as CSS: a selector that finds it again, its bounds' W × H (border box), padding, border and corner radius.
 
 **Blueprint**
 `B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline and W × H, plus hatched padding, gaps and corner radius. A wrapper whose only child has its bounds counts as one box; depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
-_Avoid_: X-ray (a plain outline of every element on the page)
+_Avoid_: X-ray (a plain outline of every element on the page), overview
+
+**Leader**
+A dashed line from a details value (padding, gap, corner radius) to the band, gap line or corner it describes, drawn when the value has no free spot next to it and sits a little away instead. A value with no free spot even then is hidden.

@@ -1,4 +1,4 @@
-import { LABEL_H, labelWidth } from './labels';
+import { AWAY, LABEL_H, labelWidth, type Away } from './labels';
 import { formatPx, height, width, type Rect } from './rect';
 
 /** One corner's radius: [horizontal, vertical] semi-axes in px. */
@@ -41,9 +41,10 @@ const radiusText = ([x, y]: Corner) => `r ${x === y ? formatPx(x) : `${formatPx(
  * CSS px under CSS `zoom`. Spots: on the corner's 45° line 0.3 r + 6 px into the box (research Phần 05 §4.3),
  * then just above / below the corner, outside. On a short box (a pill) every inside spot covers a side padding value,
  * which outranks the radius; outside is the fallback because it lands on the page's content next to it.
- * The shared label tries the top-left corner first, then the other three.
+ * `away` (pass 2, on a leader from the arc's midpoint): along the 45° line, inward when the label fits in the box,
+ * then outward at each AWAY distance. The shared label tries the top-left corner first, then the other three.
  */
-export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[] }[] {
+export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[]; away: Away[] }[] {
   const [first] = corners;
   const equal = corners.every(([x, y]) => x === first[0] && y === first[1]);
   // corner points and their inward direction, in Corners order
@@ -57,7 +58,18 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
     const inside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy + sy * (0.3 * c[1] + 6 + LABEL_H / 2) }));
     // above / below the corner, not diagonally out: beside the box it would take the parent's side padding spot
     const outside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy - sy * (6 + LABEL_H / 2) }));
-    return [{ text, at: [...inside, ...outside] }];
+    // leaders (pass 2) start on the arc's midpoint and follow the corner's 45° line: inward when the label fits in the box, then outward
+    const k = Math.SQRT1_2;
+    const along = (d: number) =>
+      ds.map(([cx, cy, sx, sy]) => {
+        const from = { x: cx + sx * c[0] * (1 - k), y: cy + sy * c[1] * (1 - k) };
+        // d / √2 on each axis puts the label's nearest corner d from the midpoint; inward is d > 0
+        const corner = { x: from.x + sx * d * k, y: from.y + sy * d * k };
+        const sign = Math.sign(d);
+        return { at: { x: corner.x + sign * sx * w, y: corner.y + sign * sy * (LABEL_H / 2) }, from };
+      });
+    const fitsInside = ({ at: p }: Away) => p.x - w >= b.left && p.x + w <= b.right && p.y - LABEL_H / 2 >= b.top && p.y + LABEL_H / 2 <= b.bottom;
+    return [{ text, at: [...inside, ...outside], away: [...along(AWAY[0]).filter(fitsInside), ...AWAY.flatMap((d) => along(-d))] }];
   });
 }
 
@@ -93,8 +105,28 @@ export type Kept<T> = { node: T; rect: Rect; depth: number; parent: number };
 export const CAPS = { maxDepth: 8, maxNodes: 400, minSize: 8 };
 
 const meets = (a: Rect, b: Rect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-const same = (a: Rect, b: Rect) =>
+/** Same bounds, ±0.5px: a wrapper and its only child that are one box on screen. */
+export const same = (a: Rect, b: Rect) =>
   Math.abs(a.left - b.left) <= 0.5 && Math.abs(a.top - b.top) <= 0.5 && Math.abs(a.right - b.right) <= 0.5 && Math.abs(a.bottom - b.bottom) <= 0.5;
+
+/** The wrapper merge: which of a same-size wrapper and its only child is kept. One box when one is plain: the decorated one, else the child. */
+const keeps = (outerPlain: boolean, innerPlain: boolean): 'outer' | 'inner' | 'both' => (outerPlain ? 'inner' : innerPlain ? 'outer' : 'both');
+
+/**
+ * The boxes Blueprint keeps among `chain`: an element, then each ancestor with its bounds whose only rendered child
+ * the previous one is (dom.ts reads it), deepest first. Merged from the top like `collect`; returned deepest first,
+ * so a click picks the first and climbs through the rest.
+ */
+export function keptInChain<T>(chain: { node: T; plain: boolean }[]): T[] {
+  const kept: { node: T; plain: boolean }[] = [];
+  for (const link of chain.toReversed()) {
+    const outer = kept.at(-1);
+    const keep = outer ? keeps(outer.plain, link.plain) : 'both';
+    if (keep === 'inner') kept[kept.length - 1] = link;
+    else if (keep === 'both') kept.push(link);
+  }
+  return kept.map((k) => k.node).reverse();
+}
 
 /**
  * Nodes of `root`'s subtree to annotate, in document order (research Phần 05 §3.1). Boxes smaller
@@ -122,10 +154,9 @@ export function collect<T>(root: T, kids: (n: T) => T[], look: (n: T) => Look, v
     let below = depth;
     const p = nodes[parent];
     if (l.kind === 'box' && width(l.rect) >= caps.minSize && height(l.rect) >= caps.minSize && meets(l.rect, viewport)) {
-      const merge = p && alone && same(p.rect, l.rect) && (plain[parent] || l.plain);
-      if (p && merge) {
-        // keep whichever side is decorated; the inner one when both are plain
-        if (plain[parent]) {
+      const keep = p && alone && same(p.rect, l.rect) ? keeps(plain[parent] ?? false, l.plain) : 'both';
+      if (p && keep !== 'both') {
+        if (keep === 'inner') {
           p.node = n;
           plain[parent] = l.plain;
         }

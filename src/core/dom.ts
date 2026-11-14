@@ -1,5 +1,5 @@
-import { classify, radii, type Corner, type Corners, type Look } from './blueprint';
-import { gaps, type Gap } from './gap';
+import { classify, keptInChain, radii, same, type Corner, type Corners, type Look } from './blueprint';
+import { gapFlow, gaps, type Gap } from './gap';
 import { height, inset, scaleEdges, scaleOf, width, type Edges, type Rect } from './rect';
 import { selectorOf, type Spec, type Step } from './spec';
 
@@ -10,12 +10,14 @@ export type ShadowOf = (el: Element) => ShadowRoot | null;
 
 const px = (v: string) => parseFloat(v) || 0;
 
-const edges = (cs: CSSStyleDeclaration, prefix: string, suffix = ''): Edges => ({
-  top: px(cs.getPropertyValue(`${prefix}-top${suffix}`)),
-  right: px(cs.getPropertyValue(`${prefix}-right${suffix}`)),
-  bottom: px(cs.getPropertyValue(`${prefix}-bottom${suffix}`)),
-  left: px(cs.getPropertyValue(`${prefix}-left${suffix}`)),
-});
+type EdgeProperty = 'padding' | 'margin' | 'border-width';
+
+// the shorthand, not 4 longhands: ~6× cheaper, and Blueprint reads it for hundreds of nodes every frame.
+// Computed values serialize like CSS: 1 to 4 lengths, top right bottom left.
+const edges = (cs: CSSStyleDeclaration, property: EdgeProperty): Edges => {
+  const [top = 0, right = top, bottom = top, left = right] = cs.getPropertyValue(property).split(' ').map(px);
+  return { top, right, bottom, left };
+};
 
 export const bounds = (el: Element): Rect => {
   const r = el.getBoundingClientRect();
@@ -31,8 +33,8 @@ export function readBoxes(el: Element): Boxes {
   const cs = getComputedStyle(el);
   // shortcut: SVG / MathML have no offsetWidth, so their bands stay unscaled, and rotate() / skew() grow the rect and read as scale; use getBoxQuads() or the transform matrix if those pages matter.
   const [sx, sy] = el instanceof HTMLElement ? [scaleOf(width(border), el.offsetWidth), scaleOf(height(border), el.offsetHeight)] : [1, 1];
-  const scaled = (prefix: string, suffix?: string) => scaleEdges(edges(cs, prefix, suffix), sx, sy);
-  const padding = inset(border, scaled('border', '-width'));
+  const scaled = (property: EdgeProperty) => scaleEdges(edges(cs, property), sx, sy);
+  const padding = inset(border, scaled('border-width'));
   return {
     border,
     padding,
@@ -58,31 +60,36 @@ export const parentOf = (el: Element): Element | null =>
 
 // shortcut: follows the DOM, not the flat tree, so the gaps of `<slot>`ed and `display:contents` children
 // are not drawn; walk assignedElements() / grandchildren if web-component pages need it.
-/** Children that render a box, read from the shadow root when there is one (like hit testing). */
-const childrenOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
-  [...(shadowOf(el) ?? el).children].filter((c) => c !== ignore && c.getClientRects().length > 0);
-
-/** Gaps between the in-flow children of a flex or grid container, wider than `touch` (`touchLimit`); none for other elements. */
+/**
+ * Gaps between the in-flow children of a flex, grid or block container (`gapFlow`), wider than `touch` (`touchLimit`);
+ * none for other elements. Children are read from the shadow root when there is one (like hit testing).
+ */
 export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf, touch: number): Gap[] {
+  const root = shadowOf(el) ?? el;
+  // most nodes of a Blueprint: no style read, no text scan
+  if (root.children.length < 2) return [];
   const cs = getComputedStyle(el);
-  const flex = cs.display.includes('flex');
-  if (!flex && !cs.display.includes('grid')) return [];
-  const items = childrenOf(el, ignore, shadowOf)
-    .filter((c) => !['absolute', 'fixed'].includes(getComputedStyle(c).position))
+  const text = [...root.childNodes].some((n) => n instanceof Text && /\S/.test(n.data));
+  const flow = gapFlow({ display: cs.display, flexDirection: cs.flexDirection, flexWrap: cs.flexWrap, text });
+  if (!flow) return [];
+  const items = [...root.children]
+    .filter((c) => c !== ignore && c.getClientRects().length > 0 && !['absolute', 'fixed'].includes(getComputedStyle(c).position))
     .map(bounds);
   // shortcut: assumes horizontal writing-mode; swap the axes once vertical-rl / vertical-lr pages need gaps.
-  // a grid flows like wrapping rows
-  return flex ? gaps(items, cs.flexDirection.startsWith('column') ? 'y' : 'x', cs.flexWrap !== 'nowrap', touch) : gaps(items, 'x', true, touch);
+  return gaps(items, flow.main, flow.wrap, touch);
 }
 
-const isZero = (e: Edges) => !e.top && !e.right && !e.bottom && !e.left;
 const radius = (cs: CSSStyleDeclaration, corner: string) => cs.getPropertyValue(`border-${corner}-radius`);
+
+// no padding, border or radius: a same-size wrapper or child loses nothing by merging (see `keptInChain`).
+// All-zero computed shorthands serialize as one "0px".
+const isPlain = (cs: CSSStyleDeclaration) =>
+  cs.getPropertyValue('padding') === '0px' && cs.getPropertyValue('border-width') === '0px' && cs.getPropertyValue('border-radius') === '0px';
 
 /** How the blueprint walk treats `el` (see `classify`). */
 export function lookAt(el: Element): Look {
   const cs = getComputedStyle(el);
-  const plain = isZero(edges(cs, 'padding')) && isZero(edges(cs, 'border', '-width')) && ['top-left', 'top-right', 'bottom-right', 'bottom-left'].every((c) => !px(radius(cs, c)));
-  return classify({ tag: el.tagName, display: cs.display, visibility: cs.visibility, visible: el.checkVisibility({ opacityProperty: true }), rect: bounds(el), plain });
+  return classify({ tag: el.tagName, display: cs.display, visibility: cs.visibility, visible: el.checkVisibility({ opacityProperty: true }), rect: bounds(el), plain: isPlain(cs) });
 }
 
 /**
@@ -92,6 +99,38 @@ export function lookAt(el: Element): Look {
  */
 export const blueprintKids = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
   el instanceof SVGElement ? [] : [...(shadowOf(el)?.children ?? []), ...el.children].filter((c) => c !== ignore);
+
+// rendered as the blueprint walk sees it; a lone child is the chain's own rendered element, else stop at the second
+// rendered one, so a long list costs two style reads
+const hasOneChild = (el: Element, ignore: Element, shadowOf: ShadowOf) => {
+  const kids = blueprintKids(el, ignore, shadowOf);
+  if (kids.length === 1) return true;
+  let n = 0;
+  for (const c of kids) if (lookAt(c).kind !== 'reject' && ++n > 1) return false;
+  return n === 1;
+};
+
+/** `el`, then each ancestor with its bounds whose only rendered child the previous one is, deepest first (see `keptInChain`). */
+function sameSizeChain(el: Element, ignore: Element, shadowOf: ShadowOf): { node: Element; plain: boolean }[] {
+  const b = bounds(el);
+  const chain = [{ node: el, plain: isPlain(getComputedStyle(el)) }];
+  // bounds first: they are cheap, and differ for almost every parent
+  for (let p = parentOf(el); p && same(bounds(p), b) && hasOneChild(p, ignore, shadowOf); p = parentOf(p)) chain.push({ node: p, plain: isPlain(getComputedStyle(p)) });
+  return chain;
+}
+
+/** The box a click on `el`, the deepest element at the pointer, selects: among the elements sharing its bounds, the one Blueprint keeps. */
+export const boxAt = (el: Element, ignore: Element, shadowOf: ShadowOf): Element => keptInChain(sameSizeChain(el, ignore, shadowOf))[0] ?? el;
+
+/** Where clicking the selected `el` again climbs: the next box up that Blueprint would keep; `el` itself at the top of the page. */
+export function boxAbove(el: Element, ignore: Element, shadowOf: ShadowOf): Element {
+  const chain = sameSizeChain(el, ignore, shadowOf);
+  // every other element of the chain is an ancestor of `el`
+  const [next] = keptInChain(chain).filter((k) => k !== el);
+  if (next) return next;
+  const parent = parentOf(chain.at(-1)?.node ?? el);
+  return parent ? boxAt(parent, ignore, shadowOf) : el;
+}
 
 /**
  * Effective CSS `zoom` (`currentCSSZoom`) of the nearest element containing all of `els` (each counts
@@ -114,6 +153,8 @@ export function zoomOf(els: Element[]): number {
 // computed radii are CSS px, the bounds are zoomed: % resolve against the CSS size, as layout does
 const cssRadii = (el: Element, b: Rect, z: number): Corners => {
   const cs = getComputedStyle(el);
+  // most boxes: skip the 4 longhands
+  if (cs.getPropertyValue('border-radius') === '0px') return [[0, 0], [0, 0], [0, 0], [0, 0]];
   return radii([radius(cs, 'top-left'), radius(cs, 'top-right'), radius(cs, 'bottom-right'), radius(cs, 'bottom-left')], width(b) / z, height(b) / z);
 };
 
@@ -139,7 +180,7 @@ export function readSpec(el: Element): Spec {
   const b = bounds(el);
   const z = el.currentCSSZoom;
   const cs = getComputedStyle(el);
-  const border = edges(cs, 'border', '-width');
+  const border = edges(cs, 'border-width');
   // shortcut: one style and color for the whole border (the first drawn side); emit per-side longhands if mixed borders matter.
   const side = (['top', 'right', 'bottom', 'left'] as const).find((s) => border[s] > 0) ?? 'top';
   // shortcut: inside a shadow root the chain stops at the root, so the selector only works from that root; prefix the host's selector if agents need it.

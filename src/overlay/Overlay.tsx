@@ -188,6 +188,14 @@ export function Overlay({ frame }: { frame: Frame }) {
           <SegmentLine key={i} part="measurement" s={s} color={theme.measurement.line} strokeWidth={theme.measurement.lineWidth} />
         ))}
         {gaps.map((g, i) => <SegmentLine key={i} part="gap" s={g} color={theme.gap.line} strokeWidth={theme.gap.lineWidth} />)}
+        {labels.map((l, i) =>
+          l.leader ? (
+            <g key={i} stroke={LABEL_COLOR[l.kind]} fill={LABEL_COLOR[l.kind]}>
+              <line x1={l.leader.x1} y1={l.leader.y1} x2={l.leader.x2} y2={l.leader.y2} strokeWidth={theme.leader.width} strokeDasharray={theme.leader.dash} data-line="leader" />
+              <circle cx={l.leader.x1} cy={l.leader.y1} r={theme.leader.dot} stroke="none" data-leader-dot="" />
+            </g>
+          ) : null,
+        )}
         <g data-labels="" style={{ filter: `drop-shadow(${theme.label.shadow})` }}>
           {labels.map((l, i) => <Label key={i} l={l} />)}
         </g>

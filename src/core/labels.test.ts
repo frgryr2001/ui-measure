@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { radiusLabels } from './blueprint';
 import { gaps } from './gap';
 import { HINT_H, placeHint } from './hint';
-import { lineSpots, placeLabels, sizeSpots, type Label } from './labels';
+import { lineAway, lineSpots, paddingAway, placeLabels, sizeSpots, type Away, type Label } from './labels';
 import type { Rect } from './rect';
 
 const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
@@ -158,5 +158,140 @@ describe('labels move out of the hint’s way', () => {
       [hint],
     );
     expect(shown.map((l) => [l.id, l.box.top])).toEqual([['size', 291]]);
+  });
+});
+
+describe('leaders (pass 2)', () => {
+  // "10 × 10" is 56.2 × 18; `blocker` takes the spot at (100, 100): x 71.9–128.1, y 91–109
+  const blocker = label('blocker', 2, { x: 100, y: 100 });
+  const value = (away: Away[], at = { x: 100, y: 100 }): Label => ({ ...label('v', 1, at), pinned: true, away });
+
+  it('a value with no free spot next to it sits away, with a leader from its target to the nearest edge of the label', () => {
+    const { shown } = placeLabels([blocker, value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }])], VP, new Map());
+    expect(shown.find((l) => l.id === 'v')).toMatchObject({ box: { top: 131, bottom: 149 }, leader: { x1: 100, y1: 112, x2: 100, y2: 131 } });
+  });
+
+  it('an away spot without `from` (a padding value slid along its band) has no leader', () => {
+    const { shown } = placeLabels([blocker, value([{ at: { x: 100, y: 140 } }])], VP, new Map());
+    const v = shown.find((l) => l.id === 'v');
+    expect(v?.box.top).toBe(131);
+    expect(v?.leader).toBeUndefined();
+  });
+
+  it('a leader longer than 40px is hidden; the next spot, closer, is taken', () => {
+    const far = { at: { x: 100, y: 200 }, from: { x: 100, y: 112 } };
+    expect(placeLabels([blocker, value([far])], VP, new Map()).shown.map((l) => l.id)).toEqual(['blocker']);
+    const { shown } = placeLabels([blocker, value([far, { at: { x: 100, y: 145 }, from: { x: 100, y: 112 } }])], VP, new Map());
+    expect(shown.find((l) => l.id === 'v')?.box.top).toBe(136);
+  });
+
+  it('a spot whose leader would cross a placed label is skipped', () => {
+    // from the middle of the blocker, the leader runs across it
+    const crossing = { at: { x: 100, y: 140 }, from: { x: 100, y: 100 } };
+    expect(placeLabels([blocker, value([crossing])], VP, new Map()).shown.map((l) => l.id)).toEqual(['blocker']);
+  });
+
+  it('a later label never covers a placed leader', () => {
+    const led = value([{ at: { x: 100, y: 145 }, from: { x: 100, y: 112 } }]);
+    // `other` could sit on the leader (y 112–136) at its first away spot, so it takes the second
+    const other: Label = { id: 'o', text: '8', priority: 0.5, pinned: true, at: [{ x: 100, y: 100 }], away: [{ at: { x: 100, y: 122 } }, { at: { x: 200, y: 122 } }] };
+    const { shown } = placeLabels([blocker, led, other], VP, new Map());
+    expect(shown.find((l) => l.id === 'o')?.box.left).toBeGreaterThan(150);
+  });
+
+  it('every near spot goes first: a lower value next to its target beats a higher one moving away', () => {
+    // `high` is blocked at (100, 100); its away spot at (100, 140) is `low`'s near spot
+    const high = value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }]);
+    const low = { ...label('low', 0.5, { x: 100, y: 140 }), pinned: true };
+    const { shown } = placeLabels([blocker, { ...high, priority: 1 }, low], VP, new Map());
+    expect(shown.map((l) => l.id).sort()).toEqual(['blocker', 'low']);
+  });
+
+  it('back next to its target as soon as the near spot frees up: an away spot is no anchor', () => {
+    const v = value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }]);
+    const first = placeLabels([blocker, v], VP, new Map());
+    expect(first.shown.find((l) => l.id === 'v')?.leader).toBeDefined();
+    const second = placeLabels([v], VP, first.anchors);
+    expect(second.shown[0]).toMatchObject({ id: 'v', box: { top: 91 } });
+    expect(second.shown[0]?.leader).toBeUndefined();
+  });
+
+  it('a value blocked only by the Hint stays hidden under it, never moved onto a leader', () => {
+    const hint: Rect = { left: 60, top: 85, right: 140, bottom: 115 };
+    const v = value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }]);
+    expect(placeLabels([v], VP, new Map(), [hint]).shown).toEqual([]);
+  });
+
+  it('~1500 labels, most of them led away, place within a frame budget', () => {
+    // a 30 × 50 grid of 16px cells: every label's near spot is shared with its neighbours
+    const many: Label[] = Array.from({ length: 1500 }, (_, i) => {
+      const at = { x: 20 + (i % 50) * 16, y: 20 + Math.floor(i / 50) * 16 };
+      return { id: `l${i}`, text: '12', priority: i % 7, pinned: true, at: [at], away: [16, 32].flatMap((d) => [{ at: { x: at.x, y: at.y - d - 9 }, from: at }, { at: { x: at.x, y: at.y + d + 9 }, from: at }]) };
+    });
+    placeLabels(many, VP, new Map());
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) placeLabels(many, VP, new Map());
+    expect((performance.now() - t0) / 10).toBeLessThan(4);
+  });
+});
+
+describe('leader spots', () => {
+  const dist = (a: { x: number; y: number }, r: Rect) => Math.hypot(a.x - Math.min(Math.max(a.x, r.left), r.right), a.y - Math.min(Math.max(a.y, r.top), r.bottom));
+  const boxOf = (p: { x: number; y: number }, text: string): Rect => {
+    const w = (text.length * 6.6 + 10) / 2;
+    return { left: p.x - w, top: p.y - 9, right: p.x + w, bottom: p.y + 9 };
+  };
+  const inBox = (r: Rect, b: Rect) => r.left >= b.left && r.top >= b.top && r.right <= b.right && r.bottom <= b.bottom;
+
+  it('radius: on the corner\'s 45° line from the arc midpoint, inward when it fits, then outward at 16 and 32px', () => {
+    const b: Rect = { left: 100, top: 100, right: 300, bottom: 200 };
+    const [l] = radiusLabels(b, [[0, 0], [0, 0], [20, 20], [0, 0]]);
+    const away = l?.away ?? [];
+    // the bottom-right arc's midpoint
+    const mid = { x: 300 - 20 * (1 - Math.SQRT1_2), y: 200 - 20 * (1 - Math.SQRT1_2) };
+    expect(away.map((a) => [a.from?.x, a.from?.y])).toEqual(away.map(() => [mid.x, mid.y]));
+    const boxes = away.map((a) => boxOf(a.at, 'r 20'));
+    expect(boxes.map((r) => inBox(r, b))).toEqual([true, false, false]);
+    expect(boxes.map((r) => Math.round(dist(mid, r)))).toEqual([16, 16, 32]);
+    // up-left into the box, then down-right out of it
+    expect(away[0] && away[0].at.x < mid.x && away[0].at.y < mid.y).toBe(true);
+    expect(away.slice(1).every((a) => a.at.x > mid.x && a.at.y > mid.y)).toBe(true);
+  });
+
+  it('radius: no inward spot when the label does not fit inside the box; one shared label tries all four corners', () => {
+    const pill: Rect = { left: 0, top: 0, right: 120, bottom: 32 };
+    const [l] = radiusLabels(pill, [[16, 16], [16, 16], [16, 16], [16, 16]]);
+    const boxes = (l?.away ?? []).map((a) => boxOf(a.at, 'r 16'));
+    expect(boxes).toHaveLength(8);
+    expect(boxes.some((r) => inBox(r, pill))).toBe(false);
+  });
+
+  it('padding: slid to both ends of its band first (no leader), then outside the box, perpendicular to its side, at 16 and 32px', () => {
+    const border: Rect = { left: 100, top: 100, right: 540, bottom: 160 };
+    // a 24px left padding band
+    const band: Rect = { left: 100, top: 100, right: 124, bottom: 160 };
+    const away = paddingAway(band, border, 'left', '24');
+    expect(away.slice(0, 2).map((a) => [a.from, a.at.x])).toEqual([[undefined, 112], [undefined, 112]]);
+    expect(away.slice(0, 2).map((a) => a.at.y)).toEqual([113, 147]);
+    const out = away.slice(2);
+    expect(out.map((a) => [a.from?.x, a.from?.y, a.at.y])).toEqual([[112, 130, 130], [112, 130, 130]]);
+    expect(out.map((a) => boxOf(a.at, '24').right)).toEqual([84, 68]);
+  });
+
+  it('padding: a band too short to slide along has only the outside spots', () => {
+    const border: Rect = { left: 0, top: 0, right: 100, bottom: 40 };
+    const away = paddingAway({ left: 0, top: 0, right: 100, bottom: 4 }, border, 'top', '4');
+    // "4" is 16.6 wide: 4px in from each end of the band
+    expect(away.map((a) => [a.at.x, a.from === undefined])).toEqual([[12.3, true], [87.7, true], [50, false], [50, false]]);
+    expect(paddingAway({ left: 0, top: 0, right: 20, bottom: 4 }, border, 'top', '4').every((a) => a.from)).toBe(true);
+    expect(paddingAway({ left: 0, top: 0, right: 20, bottom: 4 }, border, 'top', '4').map((a) => boxOf(a.at, '4').bottom)).toEqual([-16, -32]);
+  });
+
+  it('gap: perpendicular to its line, at 16 then 32px on either side, led from the line\'s middle', () => {
+    const away = lineAway({ axis: 'y', x1: 50, y1: 100, x2: 50, y2: 110, value: 10 }, '10');
+    expect(away.map((a) => [a.from?.x, a.from?.y])).toEqual(away.map(() => [50, 105]));
+    expect(away.map((a) => Math.round(dist({ x: 50, y: 105 }, boxOf(a.at, '10'))))).toEqual([16, 16, 32, 32]);
+    expect(away.map((a) => Math.sign(a.at.x - 50))).toEqual([1, -1, 1, -1]);
+    expect(lineAway({ axis: 'x', x1: 0, y1: 50, x2: 10, y2: 50, value: 10 }, '10').map((a) => a.at.y)).toEqual([25, 75, 9, 91]);
   });
 });

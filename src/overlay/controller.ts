@@ -1,8 +1,8 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, deepElementAt, isTypingInPage, lookAt, parentOf, readBoxes, readGaps, readRadii, readSpec, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
+import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
-import { LABEL_H, labelWidth, lineSpots, placeLabels, sizeSpots, type Anchors, type Label } from '../core/labels';
+import { LABEL_H, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
@@ -11,13 +11,14 @@ import { copyText } from './clipboard';
 
 /** Picks the label's fill: that role's `label` in theme.ts. */
 export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius';
-export type PlacedLabel = { text: string; kind: LabelKind; box: Rect };
+/** `leader`: a details value placed away from what it describes (GLOSSARY "Leader"). */
+export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader };
 
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
 const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, hoverSize: 2 };
 // Details sit below every other label (research Phần 05 §5): the selected element's gaps, radius and
 // padding, then Blueprint's child sizes by area, gaps, padding, radius. Padding outranks radius: a padding
-// value has one spot, in its band, while radius falls back to just outside its corner, or to another corner
+// value has one near spot, in its band, while radius falls back to just outside its corner, or to another corner
 // when all four match (a pill's inside corner spot covers its side padding value). A hovered node's size comes back as
 // the hover size, its other labels get `hoverBoost`, which keeps them above other details and below that size.
 const DETAILS = { rootGap: 1, rootPadding: 0.97, rootRadius: 0.95, size: 0.5, sizeByArea: 0.3, gap: 0.4, padding: 0.35, radius: 0.3, hoverBoost: 1 };
@@ -82,7 +83,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   let blueprint = false;
   // in click order: the last one is what Copy and Blueprint describe
   let selected: Element[] = [];
-  // deepest element under the last plain click, null after Shift+click or Esc; while set, the selection is it or an ancestor it climbed to
+  // box the last plain click picked (`boxAt`), null after Shift+click or Esc; while set, the selection is it or a box it climbed to
   let lastHit: Element | null = null;
   let last = '';
   let raf = 0;
@@ -127,13 +128,14 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       if (type === 'pointerdown' && e instanceof PointerEvent && e.button === 0) {
         // blocking mousedown also blocks the focus move into this frame, and keys would go to the frame focused before
         window.focus();
-        const el = deepElementAt(e.clientX, e.clientY, host, shadowOf);
+        const hit = deepElementAt(e.clientX, e.clientY, host, shadowOf);
+        const el = hit && boxAt(hit, host, shadowOf);
         if (e.shiftKey) {
           lastHit = null;
           if (el) selected = selected.includes(el) ? selected.filter((s) => s !== el) : [...selected, el];
         } else {
           const one = climbsFrom(el);
-          selected = one ? [parentOf(one) ?? one] : el ? [el] : [];
+          selected = one ? [boxAbove(one, host, shadowOf)] : el ? [el] : [];
           lastHit = el;
         }
       }
@@ -197,7 +199,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
     // read every frame: browser zoom and moving the window to another display change it
     const dpr = window.devicePixelRatio;
-    const target = pointer ? deepElementAt(pointer.x, pointer.y, host, shadowOf) : null;
+    // the box a click would select, so hovering shows what a click picks
+    const hit = pointer ? deepElementAt(pointer.x, pointer.y, host, shadowOf) : null;
+    const target = hit && boxAt(hit, host, shadowOf);
     const selectedRects = selected.map(bounds);
     const selRect = union(selectedRects);
     const hover = target ? readBoxes(target) : null;
@@ -237,9 +241,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const corners = kept.map((k) => ({ el: k.node, box: drawnBoxes(k.node, k.boxes).border, radii: readRadii(k.node, k.boxes.border) }));
 
     const labels: (Label & { kind: LabelKind })[] = [];
-    // `pinned`: details labels are hidden rather than pushed away from what they describe
-    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], pinned = false) =>
-      labels.push({ id, text, kind, priority, at: at(text), pinned });
+    // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden
+    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away']) =>
+      labels.push({ id, text, kind, priority, at: at(text), pinned: !!away, away: away?.(text) });
     if (toast && performance.now() > toast.until) toast = null;
     if (toast) {
       // the top spot for when the hint sits on the bottom one
@@ -286,26 +290,28 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       const rp = boxes.padding;
       const rc = boxes.content;
       const sides = [
-        [rc.top - rp.top, mid(p.left, p.right), mid(p.top, c.top)],
-        [rp.right - rc.right, mid(c.right, p.right), mid(p.top, p.bottom)],
-        [rp.bottom - rc.bottom, mid(p.left, p.right), mid(c.bottom, p.bottom)],
-        [rc.left - rp.left, mid(p.left, c.left), mid(p.top, p.bottom)],
+        ['top', rc.top - rp.top, { left: p.left, top: p.top, right: p.right, bottom: c.top }],
+        ['right', rp.right - rc.right, { left: c.right, top: p.top, right: p.right, bottom: p.bottom }],
+        ['bottom', rp.bottom - rc.bottom, { left: p.left, top: c.bottom, right: p.right, bottom: p.bottom }],
+        ['left', rc.left - rp.left, { left: p.left, top: p.top, right: c.left, bottom: p.bottom }],
       ] as const;
-      sides.forEach(([value, x, y], i) => {
-        if (value > touch) add(`pad:${id}:${i}`, formatPx(value / z), 'padding', boost + (node === root ? DETAILS.rootPadding : DETAILS.padding), () => [{ x, y }], true);
+      sides.forEach(([side, value, band], i) => {
+        if (value <= touch) return;
+        const priority = boost + (node === root ? DETAILS.rootPadding : DETAILS.padding);
+        add(`pad:${id}:${i}`, formatPx(value / z), 'padding', priority, () => [{ x: mid(band.left, band.right), y: mid(band.top, band.bottom) }], (t) => paddingAway(band, drawn.border, side, t));
       });
     }
     for (const { el, gaps } of gapsOf) {
       const z = zoomOf([el]);
       const priority = boostOf(el) + (el === root ? DETAILS.rootGap : DETAILS.gap);
-      gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', priority, (t) => lineSpots(g, t), true));
+      gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', priority, (t) => lineSpots(g, t), (t) => lineAway(g, t)));
     }
     for (const { el, box, radii } of corners) {
       const priority = boostOf(el) + (el === root ? DETAILS.rootRadius : DETAILS.radius);
-      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, true));
+      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away));
     }
     const one = climbsFrom(target);
-    const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && parentOf(one) !== null } : { kind: 'idle' };
+    const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
     const parts = hintParts(hintState);
     const hint = pointer && !measuring ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
     const placed = placeLabels(labels, viewport, anchors, hint ? [hint.box] : []);
@@ -320,7 +326,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       measuring,
       measurement,
       gaps: gapsOf.flatMap((o) => o.gaps),
-      labels: placed.shown.map(({ text, kind, box }) => ({ text, kind, box })),
+      labels: placed.shown.map(({ text, kind, box, leader }) => ({ text, kind, box, ...(leader && { leader }) })),
       details: root ? {
         outlines: kept.filter((k) => k.node !== root).map((k) => k.boxes.border),
         padding: kept.flatMap((k) => {

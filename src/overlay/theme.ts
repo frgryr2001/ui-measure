@@ -22,6 +22,8 @@ export const theme = {
   /** `bounds`: the union outline of a multi-selection. */
   selection: { outline: BLUE, outlineWidth: 2, bounds: BLUE, boundsWidth: 1, boundsDash: DASH },
   blueprint: { outline: BLUE, outlineWidth: 1, outlineDash: DASH },
+  /** A details value placed away from what it describes: a dashed line in its label's color, with a dot (`dot`: radius) on the target. */
+  leader: { width: 1, dash: '2 2', dot: 2 },
   /** Corner arcs and their `r` labels. */
   radius: { label: BLUE, arc: BLUE, arcWidth: 1.5 },
   hint: {

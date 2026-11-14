@@ -25,6 +25,20 @@ function gapOf(a: Rect, b: Rect, axis: Axis, touch: number): Gap | null {
   return axis === 'x' ? { axis, x1: a[end], y1: c, x2: b[start], y2: c, value } : { axis, x1: c, y1: a[end], x2: c, y2: b[start], value };
 }
 
+// computed `display` of a container whose children flow as blocks and lines (CSS Display 3 "flow")
+const BLOCK = new Set(['block', 'inline-block', 'flow-root', 'list-item']);
+
+/**
+ * How `gaps` reads a container's children, from its computed style; null for one that has no gaps. Flex follows its
+ * direction and wrap; a grid flows like wrapping rows, and so does a block container: stacked blocks are its lines,
+ * inline-blocks on one line share one. `text`: the container has direct non-whitespace text, which a block's gap line would cross.
+ */
+export function gapFlow(s: { display: string; flexDirection: string; flexWrap: string; text: boolean }): { main: Axis; wrap: boolean } | null {
+  if (s.display.includes('flex')) return { main: s.flexDirection.startsWith('column') ? 'y' : 'x', wrap: s.flexWrap !== 'nowrap' };
+  if (s.display.includes('grid') || (BLOCK.has(s.display) && !s.text)) return { main: 'x', wrap: true };
+  return null;
+}
+
 // shortcut: a line is items that overlap on the cross axis, so a grid item spanning rows merges
 // those rows (their row gap is not drawn), and a wrapped line whose items share no cross range
 // (align-self start and end in a tall line) splits in two; read grid tracks if such layouts matter.
