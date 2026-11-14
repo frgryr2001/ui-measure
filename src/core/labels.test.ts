@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { radiusLabels } from './blueprint';
+import { gaps } from './gap';
 import { HINT_H, placeHint } from './hint';
-import { lineSpots, placeLabels, segmentSpots, sizeSpots, type Label } from './labels';
+import { lineSpots, placeLabels, sizeSpots, type Label } from './labels';
 import type { Rect } from './rect';
 
 const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
@@ -111,29 +112,35 @@ describe('lineSpots', () => {
   });
 
   it('a vertical line tries its middle, then right, then left of it by half the label width', () => {
-    // "16" is 23.2 wide
-    expect(lineSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 16, value: 16 }, '16')).toEqual([
-      { x: 10, y: 8 },
-      { x: 25.6, y: 8 },
-      { x: -5.6, y: 8 },
+    // "18" is 23.2 wide
+    expect(lineSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 18, value: 18 }, '18')).toEqual([
+      { x: 10, y: 9 },
+      { x: 25.6, y: 9 },
+      { x: -5.6, y: 9 },
     ]);
   });
-});
 
-describe('segmentSpots', () => {
-  it('a measurement line shorter than its label is not covered by it: beside the line only', () => {
+  it('a line shorter than its label is not covered by it: beside the line only', () => {
     // "1" is 16.6 wide: on a 1px spacing the middle spot would hide the line and both boxes' edges
-    expect(segmentSpots({ axis: 'x', x1: 100, y1: 50, x2: 101, y2: 50, value: 1 }, '1')).toEqual([
+    expect(lineSpots({ axis: 'x', x1: 100, y1: 50, x2: 101, y2: 50, value: 1 }, '1')).toEqual([
       { x: 100.5, y: 37 },
       { x: 100.5, y: 63 },
     ]);
     // a label is 18 tall
-    expect(segmentSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 16, value: 16 }, '16').map((p) => p.x)).toEqual([25.6, -5.6]);
+    expect(lineSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 16, value: 16 }, '16').map((p) => p.x)).toEqual([25.6, -5.6]);
   });
+});
 
-  it('a line as long as its label keeps the middle spot', () => {
-    expect(segmentSpots({ axis: 'x', x1: 0, y1: 50, x2: 24, y2: 50, value: 24 }, '24')[0]).toEqual({ x: 12, y: 50 });
-    expect(segmentSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 18, value: 18 }, '18')[0]).toEqual({ x: 10, y: 9 });
+describe('gap labels', () => {
+  it('a gap shorter than its label sits beside its line, never on it, along either axis', () => {
+    // a 10px column gap between two 500 × 60 rows, and a 10px row gap between two 60 × 60 tiles
+    const column = gaps([{ left: 0, top: 0, right: 500, bottom: 60 }, { left: 0, top: 70, right: 500, bottom: 130 }], 'y', false, 0);
+    const row = gaps([{ left: 0, top: 0, right: 60, bottom: 60 }, { left: 70, top: 0, right: 130, bottom: 60 }], 'x', false, 0);
+    for (const g of [...column, ...row]) {
+      const [cx, cy] = [(g.x1 + g.x2) / 2, (g.y1 + g.y2) / 2];
+      const w = 2 * 6.6 + 10;
+      for (const p of lineSpots(g, '10')) expect(Math.abs(p.x - cx) >= w / 2 || Math.abs(p.y - cy) >= 9).toBe(true);
+    }
   });
 });
 

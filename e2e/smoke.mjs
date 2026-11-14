@@ -28,7 +28,7 @@ function findChrome() {
 }
 
 // the hover outline in the overlay's svg, as a quoted selector for evaluated page code
-const HOVER_OUTLINE = `'rect[stroke-width="1"]:not([stroke-dasharray])'`;
+const HOVER_OUTLINE = `'[data-outline="hover"]'`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function poll(what, fn, ok, timeout = 5000) {
   const end = Date.now() + timeout;
@@ -136,7 +136,7 @@ try {
       return {
         svg: !!svg,
         chip: [...(svg?.querySelectorAll('text') ?? [])].map((t) => t.textContent).find((t) => t.startsWith('⌥')) ?? null,
-        lines: svg?.querySelectorAll('path[stroke="#f24822"]').length ?? 0,
+        lines: svg?.querySelectorAll('[data-line="measurement"]').length ?? 0,
       };
     })()`);
   const center = (selector, session = page) =>
@@ -159,9 +159,9 @@ try {
       const kids = [...h.children].map((c) => c.getBoundingClientRect());
       return { text: [...h.children].map((c) => c.textContent).join(' '), box: [r.x, r.y, r.width, r.height], vw: innerWidth, vh: innerHeight, used: kids.at(-1).right - kids[0].left };
     })()`);
-  // label collision: every pair of visible label boxes (the only rects with rx) and the hint must be 4px apart (labels.ts APART)
+  // label collision: every pair of visible label boxes and the hint must be 4px apart (labels.ts APART)
   const assertLabelsApart = async (what) => {
-    const boxes = await evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[rx]')]
+    const boxes = await evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label]')]
       .map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)))`);
     const hint = await hintOf();
     if (hint) boxes.push(hint.box);
@@ -176,7 +176,7 @@ try {
   await mouse('mouseMoved', a);
   await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
   const labelChrome = await evaluate(page, `(() => {
-    const r = document.querySelector('ui-measure-root').shadowRoot.querySelector('rect[rx]');
+    const r = document.querySelector('ui-measure-root').shadowRoot.querySelector('[data-label]');
     return { rx: r?.getAttribute('rx'), filter: r?.closest('[data-labels]')?.style.filter ?? '' };
   })()`);
   assert.equal(labelChrome.rx, '8', 'a label is rounded like the hint');
@@ -202,7 +202,7 @@ try {
   assert.equal(await hintOf(), null, 'hint hidden while measuring');
   // the line glides onto tile 2; labels are checked once it has arrived
   const linePaths = () =>
-    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('path[stroke="#f24822"]')].map((p) => p.getAttribute('d')).join('|')`);
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-line="measurement"]')].map((p) => p.getAttribute('d')).join('|')`);
   const linesSettled = (() => {
     let before = '';
     return (d) => d.length > 0 && before === (before = d);
@@ -224,8 +224,8 @@ try {
       const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
       const box = (r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(',');
       return {
-        selected: [...svg.querySelectorAll('rect[stroke-width="2"]')].map(box),
-        union: [...svg.querySelectorAll('rect[stroke-dasharray]')].map(box),
+        selected: [...svg.querySelectorAll('[data-outline="selected"]')].map(box),
+        union: [...svg.querySelectorAll('[data-outline="selection"]')].map(box),
       };
     })()`);
   const expectSelected = async (what, selectors) => {
@@ -270,7 +270,7 @@ try {
 
   // gaps of a flex / grid container: click a child twice to select the container, read the purple labels
   const gapLabels = () =>
-    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#a855f7"] + text')].map((t) => t.textContent)`);
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label="gap"] + text')].map((t) => t.textContent)`);
   for (const [id, want] of [['gap-wrap', ['16', '16', '12', '24']], ['gap-column', ['10', '20']], ['gap-grid', ['16', '16', '24', '16']]]) {
     await evaluate(page, `document.querySelector('#${id}').scrollIntoView({ block: 'center' })`);
     const child = await center(`#${id} > :first-child`);
@@ -289,6 +289,20 @@ try {
     await poll(`gaps of #${id}`, gapLabels, (g) => JSON.stringify(g) === JSON.stringify(want));
     const n = await assertLabelsApart(`gaps of #${id}`);
     console.log(`ok  gaps of #${id}: ${want.join(' ')}, ${n} labels apart`);
+    if (id === 'gap-column') {
+      // its 10 (vertical line) and 20 (horizontal line) gaps are shorter than their labels: each value sits beside its line, not on it
+      const covered = await evaluate(page, `(() => {
+        const root = document.querySelector('ui-measure-root').shadowRoot;
+        const boxes = [...root.querySelectorAll('[data-label="gap"]')].map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)));
+        return [...root.querySelectorAll('[data-line="gap"]')].map((p) => {
+          const [x1, y1, x2, y2] = p.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+          const [mx, my] = [(x1 + x2) / 2, (y1 + y2) / 2];
+          return boxes.some(([x, y, w, h]) => mx >= x && mx <= x + w && my >= y && my <= y + h) ? [x1, y1, x2, y2] : null;
+        }).filter(Boolean);
+      })()`);
+      assert.deepEqual(covered, [], 'gap labels of #gap-column must sit beside their lines');
+      console.log('ok  short gap labels of #gap-column sit beside their lines, both axes');
+    }
   }
 
   // blueprint: select a card, B annotates its subtree; dashed outlines are one path, one `M` per box
@@ -296,11 +310,11 @@ try {
   const blueprint = () =>
     evaluate(page, `(() => {
       const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
-      const d = svg.querySelector('path[stroke-dasharray]')?.getAttribute('d');
+      const d = svg.querySelector('[data-outline="blueprint"]')?.getAttribute('d');
       return {
         boxes: d ? d.split('M').length - 1 : null,
-        hatch: !!svg.querySelector('path[fill="url(#uim-hatch)"]'),
-        labels: [...svg.querySelectorAll('rect[rx] + text')].map((t) => t.textContent),
+        hatch: !!svg.querySelector('[data-band="hatch"]'),
+        labels: [...svg.querySelectorAll('[data-label] + text')].map((t) => t.textContent),
       };
     })()`);
   const corner = (selector, dx, dy) =>
@@ -331,7 +345,7 @@ try {
   await press('Escape', 'Escape', 27);
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   await mouse('mouseMoved', cardPadding);
-  await poll('hover only: no padding numbers, no radius', async () => ({ ...(await blueprint()), green: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#16a34a"]').length`), hover: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE}).length`) }),
+  await poll('hover only: no padding numbers, no radius', async () => ({ ...(await blueprint()), green: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label="padding"]').length`), hover: await evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE}).length`) }),
     (o) => o.hover === 1 && !o.hatch && o.green === 0 && radiusOf(o.labels).length === 0);
   await select(cardPadding);
   await poll('details back on select', blueprint, (o) => o.labels.includes('r 20'));
@@ -411,7 +425,7 @@ try {
   await send('Emulation.setFocusEmulationEnabled', { enabled: true }, page);
   const clipboard = () => evaluate(page, 'navigator.clipboard.readText()');
   const labelsOf = (session) =>
-    evaluate(session, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[rx] + text')].map((t) => t.textContent)`);
+    evaluate(session, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label] + text')].map((t) => t.textContent)`);
   const pressC = (session = page) => press('c', 'KeyC', 67, 'c', 0, session);
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   await select(await corner('#bp-card', 160, 8));
@@ -441,11 +455,11 @@ try {
   const bands = (selector) =>
     evaluate(page, `(() => {
       const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
-      const rects = (fill) => [...svg.querySelectorAll('rect[fill="' + fill + '"]')].map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)));
+      const rects = (part) => [...svg.querySelectorAll('[data-band="' + part + '"]')].map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)));
       const edges = (rs) => rs.length === 4 && { outer: [rs[0][0], rs[0][1], rs[0][0] + rs[0][2], rs[1][1] + rs[1][3]], inner: [rs[2][0] + rs[2][2], rs[0][1] + rs[0][3], rs[3][0], rs[1][1]] };
       const box = (el) => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; };
       const el = document.querySelector(${JSON.stringify(selector)});
-      return { padding: edges(rects('rgb(34 197 94 / 0.35)')), margin: edges(rects('rgb(249 115 22 / 0.35)')), box: box(el), child: box(el.firstElementChild) };
+      return { padding: edges(rects('padding')), margin: edges(rects('margin')), box: box(el), child: box(el.firstElementChild) };
     })()`);
   const near = (a, b) => a && a.every((v, i) => Math.abs(v - b[i]) < 0.5);
   // the hover box glides in from the last element (ticket 13): settled once two reads agree
@@ -499,7 +513,7 @@ try {
       const seen = (window.__lines = new Set());
       const end = performance.now() + 400;
       const sample = () => {
-        seen.add([...root.querySelectorAll('path[stroke="#f24822"]')].map((p) => p.getAttribute('d')).join('|'));
+        seen.add([...root.querySelectorAll('[data-line="measurement"]')].map((p) => p.getAttribute('d')).join('|'));
         if (performance.now() < end) requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
@@ -520,7 +534,7 @@ try {
 
   // CSS zoom 1.5: labels show CSS px, outlines and bands stay on the rendered (zoomed) boxes
   const redLabels = () =>
-    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[fill="#f24822"] + text')].map((t) => t.textContent)`);
+    evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label="measurement"] + text')].map((t) => t.textContent)`);
   const hoverOutlines = () =>
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
   await evaluate(page, `document.querySelector('#zoomed').scrollIntoView({ block: 'center' })`);
@@ -583,8 +597,8 @@ try {
   await poll('1px spacing line settled', linePaths, linesSettled);
   const onLine = await evaluate(page, `(() => {
     const root = document.querySelector('ui-measure-root').shadowRoot;
-    const [x1, y1, x2, y2] = root.querySelector('path[stroke="#f24822"]').getAttribute('d').match(/-?[\\d.]+/g).map(Number);
-    const r = [...root.querySelectorAll('rect[fill="#f24822"]')].find((r) => r.nextElementSibling?.textContent === '1');
+    const [x1, y1, x2, y2] = root.querySelector('[data-line="measurement"]').getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+    const r = [...root.querySelectorAll('[data-label="measurement"]')].find((r) => r.nextElementSibling?.textContent === '1');
     const [x, y, w, h] = ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a));
     const mx = (x1 + x2) / 2;
     const my = (y1 + y2) / 2;
@@ -677,8 +691,8 @@ try {
       const box = (r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(',');
       return {
         hover: [...svg.querySelectorAll(${HOVER_OUTLINE})].map(box),
-        selected: [...svg.querySelectorAll('rect[stroke-width="2"]')].map(box),
-        measure: [...svg.querySelectorAll('rect[rx] + text')].map((t) => t.textContent),
+        selected: [...svg.querySelectorAll('[data-outline="selected"]')].map(box),
+        measure: [...svg.querySelectorAll('[data-label] + text')].map((t) => t.textContent),
       };
     })()`);
   const topHover = () => evaluate(page, `document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE}).length`);

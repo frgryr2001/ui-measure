@@ -2,7 +2,8 @@ import { mid, type Segment } from './measure';
 import type { Rect } from './rect';
 
 export const LABEL_H = 18;
-// shortcut: assumes Overlay's 11px monospace (≈ 0.6em per char, also for ⌥, ×, → and ·) instead of measuring text
+export const FONT_SIZE = 11;
+// shortcut: assumes FONT_SIZE in the theme's monospace (≈ 0.6em per char, also for ⌥, ×, → and ·) instead of measuring text
 // every frame; measure once with a canvas if the font changes or labels clip.
 export const CHAR_W = 6.6;
 export const labelWidth = (text: string) => text.length * CHAR_W + 10;
@@ -86,23 +87,16 @@ export function sizeSpots(b: Rect, text: string): Point[] {
   ];
 }
 
-/** Spots for a dimension line's value: on the line's middle, then beside it on either side. */
+/**
+ * Spots for a dimension line's value (a measurement or a gap): on the line's middle, then beside it on either side.
+ * No middle when the line is shorter than the label along it, where the label would cover the line and both boxes' edges.
+ */
 export function lineSpots(s: Omit<Segment, 'kind'>, text: string): Point[] {
   const x = mid(s.x1, s.x2);
   const y = mid(s.y1, s.y2);
   const dy = LABEL_H / 2 + CLEARANCE;
   const dx = labelWidth(text) / 2 + CLEARANCE;
-  return s.axis === 'x'
-    ? [{ x, y }, { x, y: y - dy }, { x, y: y + dy }]
-    : [{ x, y }, { x: x + dx, y }, { x: x - dx, y }];
-}
-
-/**
- * Spots for a measurement's value: `lineSpots`, without the middle when the line is shorter than the label
- * along it, where the label would cover the line and both boxes' edges. Gap and padding values keep theirs.
- */
-export function segmentSpots(s: Omit<Segment, 'kind'>, text: string): Point[] {
-  const spots = lineSpots(s, text);
   const short = s.axis === 'x' ? Math.abs(s.x2 - s.x1) < labelWidth(text) : Math.abs(s.y2 - s.y1) < LABEL_H;
+  const spots = s.axis === 'x' ? [{ x, y }, { x, y: y - dy }, { x, y: y + dy }] : [{ x, y }, { x: x + dx, y }, { x: x - dx, y }];
   return short ? spots.slice(1) : spots;
 }

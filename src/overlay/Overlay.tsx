@@ -1,31 +1,31 @@
 import type { CSSProperties } from 'react';
 import { rounded, type Corners } from '../core/blueprint';
 import { HINT_GAP, HINT_PAD_X, KEY_PAD_X, type PlacedHint } from '../core/hint';
+import { FONT_SIZE } from '../core/labels';
 import { mid, type Connector, type Segment } from '../core/measure';
 import { height, ring, width, type Rect } from '../core/rect';
 import type { Frame, LabelKind, PlacedLabel } from './controller';
+import { theme } from './theme';
 
-const BLUE = '#3b82f6';
-const RED = '#f24822';
-const PURPLE = '#a855f7';
-const GREEN = '#16a34a';
-const PADDING_FILL = 'rgb(34 197 94 / 0.35)';
-const PADDING_HATCH = 'rgb(34 197 94 / 0.7)';
-const MARGIN_FILL = 'rgb(249 115 22 / 0.35)';
-const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-const LABEL_COLOR: Record<LabelKind, string> = { size: BLUE, measure: RED, gap: PURPLE, padding: GREEN };
+const LABEL_COLOR: Record<LabelKind, string> = {
+  size: theme.size.label,
+  measurement: theme.measurement.label,
+  gap: theme.gap.label,
+  padding: theme.padding.label,
+  radius: theme.radius.label,
+};
 
 // drawn exactly at the box placeLabels chose, so what is tested is what is seen.
-// rounded like the Hint; the layer below carries one shadow for every label (one per label blows the blueprint frame budget)
+// rounded like the Hint; `data-*` names each part for e2e; the layer below carries one shadow for every label (one per label blows the blueprint frame budget)
 const Label = ({ l }: { l: PlacedLabel }) => (
   <g>
-    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={8} fill={LABEL_COLOR[l.kind]} />
+    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={theme.label.corner} fill={LABEL_COLOR[l.kind]} data-label={l.kind} />
     <text
       x={mid(l.box.left, l.box.right)}
       y={mid(l.box.top, l.box.bottom)}
-      fill="#fff"
-      fontSize={11}
-      fontFamily={FONT}
+      fill={theme.label.text}
+      fontSize={FONT_SIZE}
+      fontFamily={theme.font}
       textAnchor="middle"
       dominantBaseline="central"
       style={{ fontVariantNumeric: 'tabular-nums' }}
@@ -35,10 +35,11 @@ const Label = ({ l }: { l: PlacedLabel }) => (
   </g>
 );
 
-const Bands = ({ rects, fill }: { rects: Rect[]; fill: string }) =>
-  rects.map((r, i) => <rect key={i} x={r.left} y={r.top} width={width(r)} height={height(r)} fill={fill} />);
+const Bands = ({ part, rects, fill }: { part: 'padding' | 'margin'; rects: Rect[]; fill: string }) =>
+  rects.map((r, i) => <rect key={i} x={r.left} y={r.top} width={width(r)} height={height(r)} fill={fill} data-band={part} />);
 
-const Outline = ({ r, color, strokeWidth, dash }: { r: Rect; color: string; strokeWidth: number; dash?: string }) => (
+type OutlineProps = { part: 'hover' | 'selected' | 'selection'; r: Rect; color: string; strokeWidth: number; dash?: string };
+const Outline = ({ part, r, color, strokeWidth, dash }: OutlineProps) => (
   <rect
     x={r.left}
     y={r.top}
@@ -49,6 +50,7 @@ const Outline = ({ r, color, strokeWidth, dash }: { r: Rect; color: string; stro
     strokeWidth={strokeWidth}
     strokeDasharray={dash}
     shapeRendering="crispEdges"
+    data-outline={part}
   />
 );
 
@@ -70,7 +72,7 @@ const arcsPath = (cs: { box: Rect; radii: Corners }[]) =>
 
 const TICK = 3;
 // a measurement segment or a gap: both are a dimension line; its value is one of the frame's labels
-function SegmentLine({ s, color }: { s: Omit<Segment, 'kind'>; color: string }) {
+function SegmentLine({ part, s, color, strokeWidth }: { part: 'measurement' | 'gap'; s: Omit<Segment, 'kind'>; color: string; strokeWidth: number }) {
   const ticks =
     s.axis === 'x'
       ? `M${s.x1} ${s.y1 - TICK}V${s.y1 + TICK}M${s.x2} ${s.y2 - TICK}V${s.y2 + TICK}`
@@ -84,14 +86,24 @@ function SegmentLine({ s, color }: { s: Omit<Segment, 'kind'>; color: string }) 
       : s.axis === 'x'
         ? `M${lo - 3 * TICK} ${s.y1}H${lo}M${lo - TICK} ${s.y1 - TICK}L${lo} ${s.y1}L${lo - TICK} ${s.y1 + TICK}M${hi + 3 * TICK} ${s.y1}H${hi}M${hi + TICK} ${s.y1 - TICK}L${hi} ${s.y1}L${hi + TICK} ${s.y1 + TICK}`
         : `M${s.x1} ${lo - 3 * TICK}V${lo}M${s.x1 - TICK} ${lo - TICK}L${s.x1} ${lo}L${s.x1 + TICK} ${lo - TICK}M${s.x1} ${hi + 3 * TICK}V${hi}M${s.x1 - TICK} ${hi + TICK}L${s.x1} ${hi}L${s.x1 + TICK} ${hi + TICK}`;
-  return <path d={`M${s.x1} ${s.y1}L${s.x2} ${s.y2}${ticks}${arrows}`} fill="none" stroke={color} strokeWidth={1} shapeRendering="crispEdges" />;
+  return <path d={`M${s.x1} ${s.y1}L${s.x2} ${s.y2}${ticks}${arrows}`} fill="none" stroke={color} strokeWidth={strokeWidth} shapeRendering="crispEdges" data-line={part} />;
 }
 
 const ConnectorLine = ({ c }: { c: Connector }) => (
-  <line x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} stroke={RED} strokeWidth={1} strokeDasharray="4 3" shapeRendering="crispEdges" />
+  <line
+    x1={c.x1}
+    y1={c.y1}
+    x2={c.x2}
+    y2={c.y2}
+    stroke={theme.measurement.guide}
+    strokeWidth={theme.measurement.lineWidth}
+    strokeDasharray={theme.measurement.guideDash}
+    shapeRendering="crispEdges"
+    data-line="guide"
+  />
 );
 
-const KEYCAP: CSSProperties = { padding: `0 ${KEY_PAD_X}px`, lineHeight: '18px', borderRadius: 4, background: 'rgb(255 255 255 / 0.18)', color: '#fff' };
+const KEYCAP: CSSProperties = { padding: `0 ${KEY_PAD_X}px`, lineHeight: '18px', borderRadius: theme.hint.key.corner, background: theme.hint.key.background, color: theme.hint.key.text };
 
 // HTML, not SVG, for the shadow; `all: initial` keeps the page's inherited text styles from changing its width
 const Hint = ({ hint: { box, parts } }: { hint: PlacedHint }) => (
@@ -110,11 +122,11 @@ const Hint = ({ hint: { box, parts } }: { hint: PlacedHint }) => (
       justifyContent: 'center',
       gap: HINT_GAP,
       padding: `0 ${HINT_PAD_X}px`,
-      borderRadius: 8,
-      background: 'rgb(24 24 27 / 0.92)',
-      boxShadow: '0 4px 12px rgb(0 0 0 / 0.3)',
-      color: 'rgb(228 228 231)',
-      font: `11px ${FONT}`,
+      borderRadius: theme.hint.corner,
+      background: theme.hint.background,
+      boxShadow: theme.hint.shadow,
+      color: theme.hint.text,
+      font: `${FONT_SIZE}px ${theme.font}`,
       whiteSpace: 'nowrap',
       pointerEvents: 'none',
     }}
@@ -135,29 +147,48 @@ export function Overlay({ frame }: { frame: Frame }) {
         <defs>
           {/* user space: stripes line up across every band */}
           <pattern id="uim-hatch" patternUnits="userSpaceOnUse" width={6} height={6} patternTransform="rotate(45)">
-            <line x1={0} y1={0} x2={0} y2={6} stroke={PADDING_HATCH} strokeWidth={1.5} />
+            <line x1={0} y1={0} x2={0} y2={6} stroke={theme.padding.hatch} strokeWidth={theme.padding.hatchWidth} />
           </pattern>
         </defs>
         {details && (
           <>
-            <path d={rectsPath(details.padding)} fill="url(#uim-hatch)" />
-            <path d={rectsPath(details.outlines)} fill="none" stroke={BLUE} strokeWidth={1} strokeDasharray="4 3" shapeRendering="crispEdges" />
-            <path d={arcsPath(details.corners)} fill="none" stroke={BLUE} strokeWidth={1.5} />
+            <path d={rectsPath(details.padding)} fill="url(#uim-hatch)" data-band="hatch" />
+            <path
+              d={rectsPath(details.outlines)}
+              fill="none"
+              stroke={theme.blueprint.outline}
+              strokeWidth={theme.blueprint.outlineWidth}
+              strokeDasharray={theme.blueprint.outlineDash}
+              shapeRendering="crispEdges"
+              data-outline="blueprint"
+            />
+            <path d={arcsPath(details.corners)} fill="none" stroke={theme.radius.arc} strokeWidth={theme.radius.arcWidth} data-line="radius" />
           </>
         )}
         {hover && !measuring && (
           <>
-            <Bands rects={ring(hover.margin, hover.border, hoverTouch)} fill={MARGIN_FILL} />
-            <Bands rects={ring(hover.padding, hover.content, hoverTouch)} fill={PADDING_FILL} />
+            <Bands part="margin" rects={ring(hover.margin, hover.border, hoverTouch)} fill={theme.margin.band} />
+            <Bands part="padding" rects={ring(hover.padding, hover.content, hoverTouch)} fill={theme.padding.band} />
           </>
         )}
-        {hover && <Outline r={hover.border} color={measuring ? RED : BLUE} strokeWidth={1} />}
-        {selected.map((r, i) => <Outline key={i} r={r} color={BLUE} strokeWidth={2} />)}
-        {selection && selected.length > 1 && <Outline r={selection} color={BLUE} strokeWidth={1} dash="4 3" />}
+        {hover && (
+          <Outline
+            part="hover"
+            r={hover.border}
+            color={measuring ? theme.measurement.target : theme.hover.outline}
+            strokeWidth={measuring ? theme.measurement.targetWidth : theme.hover.outlineWidth}
+          />
+        )}
+        {selected.map((r, i) => <Outline key={i} part="selected" r={r} color={theme.selection.outline} strokeWidth={theme.selection.outlineWidth} />)}
+        {selection && selected.length > 1 && (
+          <Outline part="selection" r={selection} color={theme.selection.bounds} strokeWidth={theme.selection.boundsWidth} dash={theme.selection.boundsDash} />
+        )}
         {measurement?.connectors.map((c, i) => <ConnectorLine key={i} c={c} />)}
-        {measurement?.segments.map((s, i) => <SegmentLine key={i} s={s} color={RED} />)}
-        {gaps.map((g, i) => <SegmentLine key={i} s={g} color={PURPLE} />)}
-        <g data-labels="" style={{ filter: 'drop-shadow(0 4px 12px rgb(0 0 0 / 0.3))' }}>
+        {measurement?.segments.map((s, i) => (
+          <SegmentLine key={i} part="measurement" s={s} color={theme.measurement.line} strokeWidth={theme.measurement.lineWidth} />
+        ))}
+        {gaps.map((g, i) => <SegmentLine key={i} part="gap" s={g} color={theme.gap.line} strokeWidth={theme.gap.lineWidth} />)}
+        <g data-labels="" style={{ filter: `drop-shadow(${theme.label.shadow})` }}>
           {labels.map((l, i) => <Label key={i} l={l} />)}
         </g>
       </svg>

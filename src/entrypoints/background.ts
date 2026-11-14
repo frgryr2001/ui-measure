@@ -1,5 +1,6 @@
 import type { Browser } from 'wxt/browser';
 import { isMessage, isStatusReply, type Message } from '../messages';
+import { theme } from '../overlay/theme';
 
 const TITLE_OFF = 'UI Measure: OFF (Alt+Shift+M)';
 const TITLE_ON = 'UI Measure: ON (Alt+Shift+M or Esc to turn off)';
@@ -114,7 +115,7 @@ async function injectGranted(tabId: number, origins: string[]) {
 }
 
 export default defineBackground(() => {
-  void browser.action.setBadgeBackgroundColor({ color: '#f24822' });
+  void browser.action.setBadgeBackgroundColor({ color: theme.badge });
 
   browser.runtime.onInstalled.addListener(() => {
     browser.contextMenus.create({ id: FRAMES_MENU, title: 'Measure cross-origin frames', contexts: ['action'] });

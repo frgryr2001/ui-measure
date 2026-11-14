@@ -2,15 +2,15 @@ import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint'
 import { blueprintKids, bounds, deepElementAt, isTypingInPage, lookAt, parentOf, readBoxes, readGaps, readRadii, readSpec, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
-import { LABEL_H, labelWidth, lineSpots, placeLabels, segmentSpots, sizeSpots, type Anchors, type Label } from '../core/labels';
+import { LABEL_H, labelWidth, lineSpots, placeLabels, sizeSpots, type Anchors, type Label } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
 import { copyText } from './clipboard';
 
-/** Picks the label's color: size blue, measurement red, gap purple, padding green. */
-export type LabelKind = 'size' | 'measure' | 'gap' | 'padding';
+/** Picks the label's fill: that role's `label` in theme.ts. */
+export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius';
 export type PlacedLabel = { text: string; kind: LabelKind; box: Rect };
 
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
@@ -243,14 +243,14 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (toast && performance.now() > toast.until) toast = null;
     if (toast) {
       // the top spot for when the hint sits on the bottom one
-      add('toast', toast.text, toast.ok ? 'size' : 'measure', PRIORITY.toast, () => [{ x: window.innerWidth / 2, y: window.innerHeight - 20 }, { x: window.innerWidth / 2, y: 20 }]);
+      add('toast', toast.text, toast.ok ? 'size' : 'measurement', PRIORITY.toast, () => [{ x: window.innerWidth / 2, y: window.innerHeight - 20 }, { x: window.innerWidth / 2, y: 20 }]);
     }
     if (measuring) {
-      add('chip', '⌥ measuring', 'measure', PRIORITY.chip, () => [{ x: window.innerWidth - 60, y: window.innerHeight - 20 }]);
+      add('chip', '⌥ measuring', 'measurement', PRIORITY.chip, () => [{ x: window.innerWidth - 60, y: window.innerHeight - 20 }]);
     }
     if (measurement && target) {
       const key = `m:${selected.map(idOf).join()}>${idOf(target)}`;
-      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / measureZoom), 'measure', PRIORITY.measure, (t) => segmentSpots(s, t)));
+      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / measureZoom), 'measurement', PRIORITY.measure, (t) => lineSpots(s, t)));
     }
     // sizes are hidden while measuring: they sit where the vertical spacing label usually goes
     if (selRect && !measuring) {
@@ -302,7 +302,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     }
     for (const { el, box, radii } of corners) {
       const priority = boostOf(el) + (el === root ? DETAILS.rootRadius : DETAILS.radius);
-      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'size', priority, () => l.at, true));
+      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, true));
     }
     const one = climbsFrom(target);
     const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && parentOf(one) !== null } : { kind: 'idle' };

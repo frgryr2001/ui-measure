@@ -1,0 +1,36 @@
+// The overlay's look, by GLOSSARY role: edit a value and rebuild. Roles that share a color point at the same constant
+// but can be changed apart. Font size stays in core/labels.ts (it drives label widths). No imports: the worker bundles it.
+const BLUE = '#3b82f6';
+const RED = '#f24822';
+const PURPLE = '#a855f7';
+const GREEN = '#16a34a';
+const DASH = '4 3';
+const SHADOW = '0 4px 12px rgb(0 0 0 / 0.3)';
+
+export const theme = {
+  font: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  /** Every label pill; its fill is its role's `label`. */
+  label: { text: '#fff', corner: 8, shadow: SHADOW },
+  size: { label: BLUE },
+  /** `target`: the hover outline while measuring; `guide`: the dashed extension of an edge to a spacing. */
+  measurement: { label: RED, line: RED, lineWidth: 1, target: RED, targetWidth: 1, guide: RED, guideDash: DASH },
+  gap: { label: PURPLE, line: PURPLE, lineWidth: 1 },
+  /** `band`: on hover; `hatch`: in details and Blueprint. */
+  padding: { label: GREEN, band: 'rgb(34 197 94 / 0.35)', hatch: 'rgb(34 197 94 / 0.7)', hatchWidth: 1.5 },
+  margin: { band: 'rgb(249 115 22 / 0.35)' },
+  hover: { outline: BLUE, outlineWidth: 1 },
+  /** `bounds`: the union outline of a multi-selection. */
+  selection: { outline: BLUE, outlineWidth: 2, bounds: BLUE, boundsWidth: 1, boundsDash: DASH },
+  blueprint: { outline: BLUE, outlineWidth: 1, outlineDash: DASH },
+  /** Corner arcs and their `r` labels. */
+  radius: { label: BLUE, arc: BLUE, arcWidth: 1.5 },
+  hint: {
+    background: 'rgb(24 24 27 / 0.92)',
+    text: 'rgb(228 228 231)',
+    corner: 8,
+    shadow: SHADOW,
+    key: { background: 'rgb(255 255 255 / 0.18)', text: '#fff', corner: 4 },
+  },
+  /** The toolbar icon's ON badge. */
+  badge: RED,
+};
