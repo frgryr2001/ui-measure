@@ -127,10 +127,10 @@ export function styleRows(c: Computed): StyleRow[][] {
     ...(c.display.endsWith('flex') ? [...changed('flex-direction'), ...changed('justify-content'), ...changed('align-items')] : []),
     ...(c.display.endsWith('grid') ? changed('grid-template-columns') : []),
   ];
-  const lineHeight = c['line-height'] === DEFAULTS['line-height'] ? '' : ` / ${c['line-height']}`;
   const text = [
     row('font-family', family(c['font-family'])),
-    row('font-size', c['font-size'] + lineHeight),
+    row('font-size', c['font-size']),
+    ...changed('line-height'),
     row('font-weight', c['font-weight']),
     ...changed('letter-spacing'),
     colorRow('color', c.color),

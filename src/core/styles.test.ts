@@ -27,10 +27,11 @@ describe('styleRows', () => {
     expect(rows({ ...flexish })[0]).toEqual(['display  block']);
   });
 
-  it('text: line height after the size, letter spacing and alignment when changed', () => {
+  it('text: line height on its own row after the size, letter spacing and alignment when changed', () => {
     expect(rows({ 'font-family': '"Times New Roman", serif', 'line-height': '24px', 'font-weight': '600', 'letter-spacing': '-0.5px', 'text-align': 'center' })[1]).toEqual([
       'font-family  Times New Roman',
-      'font-size  16px / 24px',
+      'font-size  16px',
+      'line-height  24px',
       'font-weight  600',
       'letter-spacing  -0.5px',
       'color  #000000',

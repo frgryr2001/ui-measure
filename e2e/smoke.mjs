@@ -556,7 +556,7 @@ try {
   await poll('the Hint offers I styles', hintOf, (h) => h?.text === SELECTION_HINT);
   await pressI();
   let panel = await poll('I opens Styles', stylesOf, Boolean);
-  for (const want of ['font-family  Georgia', 'font-size  14px / 20px', 'font-weight  600', 'color  #1E293B', 'background-color  #6366F1 50%', 'box-shadow  0 4 12 0 #000000 25%', 'margin  0 0 16px']) {
+  for (const want of ['font-family  Georgia', 'font-size  14px', 'line-height  20px', 'font-weight  600', 'color  #1E293B', 'background-color  #6366F1 50%', 'box-shadow  0 4 12 0 #000000 25%', 'margin  0 0 16px']) {
     assert.ok(panel.rows.includes(want), `Styles row ${want}: ${JSON.stringify(panel.rows)}`);
   }
   assert.equal(panel.swatches, 3, `a swatch before each color (color, background, shadow): ${JSON.stringify(panel.rows)}`);
@@ -694,6 +694,31 @@ try {
   assert.match(text, /^  width: 320px;\n  height: [\d.]+px;\n  box-sizing: border-box;\n  padding: 20px 24px;\n  border: 1px solid rgb\(203, 213, 225\);\n  border-radius: 20px;\n}$/m, `CSS of #bp-card:\n${text}`);
   await poll('"Copied CSS" toast', () => labelsOf(page), (l) => l.includes('Copied CSS'));
   console.log('ok  C copies the CSS of #bp-card, toast shown');
+  // the toast fades out after 1.5s (reduced motion too: no movement), then is gone
+  const toastOpacitiesAfterC = async (motion) => {
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] }, page);
+    await pressC();
+    await poll('"Copied CSS" toast again', () => labelsOf(page), (l) => l.includes('Copied CSS'));
+    return evaluate(page, `new Promise((done) => {
+      const root = document.querySelector('ui-measure-root').shadowRoot;
+      const seen = [];
+      const end = performance.now() + 2200;
+      const sample = () => {
+        const g = [...root.querySelectorAll('[data-label] + text')].find((t) => t.textContent === 'Copied CSS')?.parentElement;
+        seen.push(g ? Number(g.getAttribute('opacity') ?? 1) : 0);
+        if (performance.now() < end) requestAnimationFrame(sample);
+        else done(seen);
+      };
+      requestAnimationFrame(sample);
+    })`);
+  };
+  for (const motion of ['no-preference', 'reduce']) {
+    const seen = await toastOpacitiesAfterC(motion);
+    const fading = seen.filter((o) => o > 0 && o < 1).length;
+    assert.ok(seen[0] === 1 && fading >= 2 && seen.at(-1) === 0, `${motion}: toast at full, then fading (${fading} frames), then gone: ${seen.join(' ')}`);
+  }
+  await send('Emulation.setEmulatedMedia', { features: [] }, page);
+  console.log('ok  the toast fades out, then is gone; under reduced motion too');
 
   await evaluate(page, 'window.scrollTo(0, 0)');
   await select(await center('.row .tile:nth-child(2)'));

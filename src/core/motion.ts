@@ -132,3 +132,27 @@ export function followMeasurement(realA: Rect, shownA: Rect, realB: Rect, shownB
   };
   return { segments: real.segments.map(line), connectors: real.connectors.map(line) };
 }
+
+const cubic = (p1: number, p2: number, t: number) => 3 * p1 * t * (1 - t) ** 2 + 3 * p2 * t ** 2 * (1 - t) + t ** 3;
+
+/** CSS `cubic-bezier(x1, y1, x2, y2)`: progress `x` in [0, 1] to eased progress. */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number) => number {
+  return (x) => {
+    // x(t) only rises while x1, x2 are in [0, 1], as CSS requires: bisect for t
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const t = (lo + hi) / 2;
+      if (cubic(x1, x2, t) < x) lo = t;
+      else hi = t;
+    }
+    return cubic(y1, y2, (lo + hi) / 2);
+  };
+}
+
+export const FADE_MS = 200;
+// strong ease-out: most of the opacity goes in the first ~80 ms, so it never hangs half seen
+const fadeEase = cubicBezier(0.32, 0.72, 0, 1);
+
+/** Opacity of a toast `ms` after its time is up: 1 until then, 0 from FADE_MS on. */
+export const fadeOut = (ms: number) => (ms <= 0 ? 1 : ms >= FADE_MS ? 0 : 1 - fadeEase(ms / FADE_MS));

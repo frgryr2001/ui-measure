@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ease, followMeasurement, followPoint, glider } from './motion';
+import { FADE_MS, cubicBezier, ease, fadeOut, followMeasurement, followPoint, glider } from './motion';
 
 const lag = (n: number) => ({ left: n, top: n, right: n, bottom: n });
 
@@ -125,5 +125,31 @@ describe('followMeasurement', () => {
       ],
       connectors: [],
     });
+  });
+});
+
+describe('cubicBezier', () => {
+  it('matches CSS: ends pinned, `ease` at half is ~0.8024, linear is linear', () => {
+    const ease = cubicBezier(0.25, 0.1, 0.25, 1);
+    expect(ease(0)).toBeCloseTo(0);
+    expect(ease(1)).toBeCloseTo(1);
+    expect(ease(0.5)).toBeCloseTo(0.8024, 3);
+    expect(cubicBezier(0, 0, 1, 1)(0.3)).toBeCloseTo(0.3);
+  });
+});
+
+describe('fadeOut', () => {
+  it('full until the time is up, gone from FADE_MS on', () => {
+    expect(fadeOut(-500)).toBe(1);
+    expect(fadeOut(0)).toBe(1);
+    expect(fadeOut(FADE_MS)).toBe(0);
+    expect(fadeOut(5000)).toBe(0);
+  });
+
+  it('falls the whole way, front-loaded: under half left by 40 ms (linear would keep 0.8)', () => {
+    const steps = Array.from({ length: 21 }, (_, i) => fadeOut(i * 10));
+    steps.slice(1).forEach((o, i) => expect(o).toBeLessThanOrEqual(steps[i] ?? 1));
+    expect(fadeOut(40)).toBeLessThan(0.5);
+    expect(fadeOut(40)).toBeGreaterThan(0);
   });
 });

@@ -19,7 +19,7 @@ const LABEL_COLOR: Record<LabelKind, string> = {
 // drawn exactly at the box placeLabels chose, so what is tested is what is seen.
 // rounded like the Hint; `data-*` names each part for e2e; the layer below carries one shadow for every label (one per label blows the blueprint frame budget)
 const Label = ({ l }: { l: PlacedLabel }) => (
-  <g>
+  <g opacity={l.opacity}>
     <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={theme.label.corner} fill={LABEL_COLOR[l.kind]} data-label={l.kind} />
     <text
       x={mid(l.box.left, l.box.right)}

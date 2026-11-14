@@ -4,7 +4,7 @@ import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
-import { followMeasurement, followPoint, glider } from '../core/motion';
+import { fadeOut, followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
 import { placeStyles, styleRows, stylesSize, type StyleRow } from '../core/styles';
@@ -17,8 +17,8 @@ declare global {
 
 /** Picks the label's fill: that role's `label` in theme.ts. */
 export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius';
-/** `leader`: a details value placed away from what it describes (GLOSSARY "Leader"). */
-export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader };
+/** `leader`: a details value placed away from what it describes (GLOSSARY "Leader"). `opacity`: under 1 only while the toast fades out. */
+export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader; opacity?: number };
 
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
 const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, hoverSize: 2 };
@@ -267,7 +267,10 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden
     const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away'], pinned = !!away) =>
       labels.push({ id, text, kind, priority, at: at(text), ...(pinned ? { pinned: true } : {}), away: away?.(text) });
-    if (toast && performance.now() > toast.until) toast = null;
+    // a toast fades out once its time is up, keeping its spot until gone; C again shows the new one at full.
+    // reduced motion fades too: opacity is no movement.
+    const toastOpacity = toast ? fadeOut(performance.now() - toast.until) : 1;
+    if (toastOpacity === 0) toast = null;
     if (toast) {
       // the top spot for when the hint sits on the bottom one
       add('toast', toast.text, toast.ok ? 'size' : 'measurement', PRIORITY.toast, () => [{ x: window.innerWidth / 2, y: window.innerHeight - 20 }, { x: window.innerWidth / 2, y: 20 }]);
@@ -371,7 +374,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       measuring,
       measurement,
       gaps: gapsOf.flatMap((o) => o.gaps),
-      labels: placed.shown.map(({ text, kind, box, leader }) => ({ text, kind, box, ...(leader && { leader }) })),
+      labels: placed.shown.map(({ id, text, kind, box, leader }) => ({ text, kind, box, ...(leader && { leader }), ...(id === 'toast' && toastOpacity < 1 && { opacity: toastOpacity }) })),
       details: root ? {
         outlines: kept.filter((k) => k.node !== root).map((k) => k.boxes.border),
         padding: kept.flatMap((k) => {
