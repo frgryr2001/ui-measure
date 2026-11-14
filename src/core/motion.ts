@@ -92,10 +92,11 @@ function owner(a: Rect, b: Rect, x: number, y: number): 'a' | 'b' | null {
  * Ends sit on the shown outlines. `value` is the real distance, never the length of the line mid-glide.
  * While the two boxes keep the same relationship, the line is remeasured on the shown boxes (so a spacing
  * stays in their shared range). Once that relationship changes, each end of the real line follows its own box.
+ * `touch`: see `measure`.
  */
-export function followMeasurement(realA: Rect, shownA: Rect, realB: Rect, shownB: Rect): Measurement {
-  const real = measure(realA, realB);
-  const shown = measure(shownA, shownB);
+export function followMeasurement(realA: Rect, shownA: Rect, realB: Rect, shownB: Rect, touch: number): Measurement {
+  const real = measure(realA, realB, touch);
+  const shown = measure(shownA, shownB, touch);
   const same = real.segments.length === shown.segments.length
     && real.connectors.length === shown.connectors.length
     && real.segments.every((s, i) => s.kind === shown.segments[i]?.kind && s.axis === shown.segments[i]?.axis);

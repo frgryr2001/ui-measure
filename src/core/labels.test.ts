@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { radiusLabels } from './blueprint';
 import { HINT_H, placeHint } from './hint';
-import { lineSpots, placeLabels, sizeSpots, type Label } from './labels';
+import { lineSpots, placeLabels, segmentSpots, sizeSpots, type Label } from './labels';
 import type { Rect } from './rect';
 
 const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
@@ -117,6 +117,23 @@ describe('lineSpots', () => {
       { x: 25.6, y: 8 },
       { x: -5.6, y: 8 },
     ]);
+  });
+});
+
+describe('segmentSpots', () => {
+  it('a measurement line shorter than its label is not covered by it: beside the line only', () => {
+    // "1" is 16.6 wide: on a 1px spacing the middle spot would hide the line and both boxes' edges
+    expect(segmentSpots({ axis: 'x', x1: 100, y1: 50, x2: 101, y2: 50, value: 1 }, '1')).toEqual([
+      { x: 100.5, y: 37 },
+      { x: 100.5, y: 63 },
+    ]);
+    // a label is 18 tall
+    expect(segmentSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 16, value: 16 }, '16').map((p) => p.x)).toEqual([25.6, -5.6]);
+  });
+
+  it('a line as long as its label keeps the middle spot', () => {
+    expect(segmentSpots({ axis: 'x', x1: 0, y1: 50, x2: 24, y2: 50, value: 24 }, '24')[0]).toEqual({ x: 12, y: 50 });
+    expect(segmentSpots({ axis: 'y', x1: 10, y1: 0, x2: 10, y2: 18, value: 18 }, '18')[0]).toEqual({ x: 10, y: 9 });
   });
 });
 

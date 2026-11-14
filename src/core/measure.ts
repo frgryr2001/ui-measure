@@ -16,8 +16,14 @@ export type Connector = { x1: number; y1: number; x2: number; y2: number };
 
 export type Measurement = { segments: Segment[]; connectors: Connector[] };
 
-/** Distances below this are treated as touching and not drawn. */
+/** Float tolerance for a point on an edge; whether a distance is drawn is `touchLimit`'s call. */
 export const EPSILON = 0.01;
+
+/**
+ * Viewport px at or under which two edges are touching (GLOSSARY): half a device pixel at `dpr`
+ * (`devicePixelRatio`), counted in CSS px of what is under CSS `zoom`, so a drawn value never reads "0".
+ */
+export const touchLimit = (dpr: number, zoom = 1) => (0.5 / dpr) * zoom;
 
 const contains = (o: Rect, i: Rect) =>
   i.left >= o.left && i.right <= o.right && i.top >= o.top && i.bottom <= o.bottom;
@@ -30,8 +36,9 @@ export const mid = (a: number, b: number) => (a + b) / 2;
  * - boxes apart on an axis: one spacing per separated axis, placed in the middle of the
  *   shared range on the other axis, else level with `a`'s center plus a connector to `b`
  * - boxes overlap on both axes: offsets between same-side edges
+ * Distances of `touch` (`touchLimit`) or less are not drawn, nor the guide of such a spacing.
  */
-export function measure(a: Rect, b: Rect): Measurement {
+export function measure(a: Rect, b: Rect, touch: number): Measurement {
   if (contains(a, b) || contains(b, a)) {
     const [o, i] = contains(a, b) ? [a, b] : [b, a];
     const cx = mid(i.left, i.right);
@@ -42,7 +49,7 @@ export function measure(a: Rect, b: Rect): Measurement {
       { kind: 'inset', axis: 'y', x1: cx, y1: i.bottom, x2: cx, y2: o.bottom, value: o.bottom - i.bottom },
       { kind: 'inset', axis: 'x', x1: o.left, y1: cy, x2: i.left, y2: cy, value: i.left - o.left },
     ];
-    return { segments: segments.filter((s) => s.value > EPSILON), connectors: [] };
+    return { segments: segments.filter((s) => s.value > touch), connectors: [] };
   }
 
   const ovX0 = Math.max(a.left, b.left);
@@ -57,9 +64,10 @@ export function measure(a: Rect, b: Rect): Measurement {
   if (apartX) {
     const y = apartY ? mid(a.top, a.bottom) : mid(ovY0, ovY1);
     const [x1, x2] = b.left >= a.right ? [a.right, b.left] : [b.right, a.left];
-    if (x2 - x1 > EPSILON) segments.push({ kind: 'spacing', axis: 'x', x1, y1: y, x2, y2: y, value: x2 - x1 });
+    const drawn = x2 - x1 > touch;
+    if (drawn) segments.push({ kind: 'spacing', axis: 'x', x1, y1: y, x2, y2: y, value: x2 - x1 });
     // end of the line on b's side sits outside b vertically: guide it to b's nearest edge
-    if (apartY) {
+    if (drawn && apartY) {
       const x = b.left >= a.right ? b.left : b.right;
       connectors.push({ x1: x, y1: y, x2: x, y2: y < b.top ? b.top : b.bottom });
     }
@@ -68,8 +76,9 @@ export function measure(a: Rect, b: Rect): Measurement {
   if (apartY) {
     const x = apartX ? mid(a.left, a.right) : mid(ovX0, ovX1);
     const [y1, y2] = b.top >= a.bottom ? [a.bottom, b.top] : [b.bottom, a.top];
-    if (y2 - y1 > EPSILON) segments.push({ kind: 'spacing', axis: 'y', x1: x, y1, x2: x, y2, value: y2 - y1 });
-    if (apartX) {
+    const drawn = y2 - y1 > touch;
+    if (drawn) segments.push({ kind: 'spacing', axis: 'y', x1: x, y1, x2: x, y2, value: y2 - y1 });
+    if (drawn && apartX) {
       const y = b.top >= a.bottom ? b.top : b.bottom;
       connectors.push({ x1: x, y1: y, x2: x < b.left ? b.left : b.right, y2: y });
     }
@@ -86,7 +95,7 @@ export function measure(a: Rect, b: Rect): Measurement {
     ] as const;
     for (const { axis, p, q } of pairs) {
       const [lo, hi] = p < q ? [p, q] : [q, p];
-      if (hi - lo <= EPSILON) continue;
+      if (hi - lo <= touch) continue;
       segments.push(
         axis === 'x'
           ? { kind: 'offset', axis, x1: lo, y1: y, x2: hi, y2: y, value: hi - lo }

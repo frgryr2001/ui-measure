@@ -28,4 +28,9 @@ describe('sizeLabel', () => {
   it('under CSS zoom: a zoom 1.5 element rendered 366 × 64 reads as its CSS 244 × 42.67', () => {
     expect(sizeLabel({ left: 20, top: 12, right: 386, bottom: 76 }, 1.5)).toBe('244 × 42.67');
   });
+
+  it('a side under 0.01 reads "<0.01", never "0"; an empty side is 0', () => {
+    expect(sizeLabel({ left: 0, top: 0, right: 0.004, bottom: 10 })).toBe('<0.01 × 10');
+    expect(sizeLabel({ left: 0, top: 0, right: 0, bottom: 0.01 })).toBe('0 × 0.01');
+  });
 });

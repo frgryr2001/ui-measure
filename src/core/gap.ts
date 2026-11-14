@@ -15,11 +15,11 @@ const shared = (a: Rect, b: Rect, axis: Axis) => {
   return Math.min(a[crossEnd], b[crossEnd]) - Math.max(a[crossStart], b[crossStart]);
 };
 
-/** Gap from `a` to `b` along `axis`, level with the middle of their shared range; null when they touch. */
-function gapOf(a: Rect, b: Rect, axis: Axis): Gap | null {
+/** Gap from `a` to `b` along `axis`, level with the middle of their shared range; null when they touch (`touch`, see `measure`). */
+function gapOf(a: Rect, b: Rect, axis: Axis, touch: number): Gap | null {
   const { start, end, crossStart, crossEnd } = SIDES[axis];
   const value = b[start] - a[end];
-  if (value <= EPSILON) return null;
+  if (value <= touch) return null;
   // with no shared range this is the middle of the space between them
   const c = mid(Math.max(a[crossStart], b[crossStart]), Math.min(a[crossEnd], b[crossEnd]));
   return axis === 'x' ? { axis, x1: a[end], y1: c, x2: b[start], y2: c, value } : { axis, x1: c, y1: a[end], x2: c, y2: b[start], value };
@@ -32,9 +32,9 @@ function gapOf(a: Rect, b: Rect, axis: Axis): Gap | null {
  * Gaps between consecutive `items` (children bounds) of a flex or grid container, measured
  * between bounds so margins and `justify-content` space are included. Items flow along `main`;
  * with `wrap` they are grouped into lines that overlap on the other axis, and the space between
- * consecutive lines is a gap too. A grid is `main` x with `wrap`: rows are its lines.
+ * consecutive lines is a gap too. A grid is `main` x with `wrap`: rows are its lines. Gaps of `touch` or less are dropped.
  */
-export function gaps(items: Rect[], main: Axis, wrap: boolean): Gap[] {
+export function gaps(items: Rect[], main: Axis, wrap: boolean, touch: number): Gap[] {
   const { start, end, crossStart, crossEnd } = SIDES[main];
   const cross = main === 'x' ? 'y' : 'x';
   const byStart = (p: Rect, q: Rect) => p[start] - q[start];
@@ -52,7 +52,7 @@ export function gaps(items: Rect[], main: Axis, wrap: boolean): Gap[] {
   let prev: Rect | null = null;
   for (const line of lines) {
     const box = union(line);
-    const g = prev && box && gapOf(prev, box, cross);
+    const g = prev && box && gapOf(prev, box, cross, touch);
     if (g) out.push(g);
     const sorted = [...line].sort(byStart);
     sorted.forEach((a, i) => {
@@ -61,7 +61,7 @@ export function gaps(items: Rect[], main: Axis, wrap: boolean): Gap[] {
       const next = wrap ? sorted.filter((b) => b[start] >= a[end] - EPSILON && shared(a, b, main) > EPSILON) : sorted.slice(i + 1, i + 2);
       const near = Math.min(...next.map((b) => b[start]));
       for (const b of next) {
-        const gap = b[start] - near <= EPSILON ? gapOf(a, b, main) : null;
+        const gap = b[start] - near <= EPSILON ? gapOf(a, b, main, touch) : null;
         if (gap) out.push(gap);
       }
     });

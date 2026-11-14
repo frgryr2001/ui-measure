@@ -172,6 +172,18 @@
       </script>
     </section>
 
+    <section>
+      <h2>Small distances: spacing 1 · 0.5 · 0.25 · 0.05 · padding 1 / 0.25 · zoom 3: spacing 1 · 0.1 · half a device pixel or less is touching, nothing drawn: DPR 1 shows 1 only, DPR 2 adds 0.5 · the 1 label sits beside its line</h2>
+      <div id="tiny" style="display:grid;gap:12px;justify-items:start">
+        <div id="tiny-1" style="display:flex"><div class="tile" style="width:60px;height:24px"></div><div class="tile" style="width:60px;height:24px;margin-left:1px"></div></div>
+        <div id="tiny-05" style="display:flex"><div class="tile" style="width:60px;height:24px"></div><div class="tile" style="width:60px;height:24px;margin-left:0.5px"></div></div>
+        <div id="tiny-025" style="display:flex"><div class="tile" style="width:60px;height:24px"></div><div class="tile" style="width:60px;height:24px;margin-left:0.25px"></div></div>
+        <div id="tiny-005" style="display:flex"><div class="tile" style="width:60px;height:24px"></div><div class="tile" style="width:60px;height:24px;margin-left:0.05px"></div></div>
+        <div id="tiny-pad" style="padding:1px 0.25px;background:#fff;outline:1px dashed #cbd5e1"><div class="tile" style="width:120px;height:24px;border-radius:0"></div></div>
+        <div id="tiny-zoom" style="zoom:3;display:flex"><div class="tile" style="width:20px;height:8px;border-radius:2px"></div><div class="tile" style="width:20px;height:8px;border-radius:2px;margin-left:1px"></div><div class="tile" style="width:20px;height:8px;border-radius:2px;margin-left:0.1px"></div></div>
+      </div>
+    </section>
+
     <div style="height:800px"></div>
   </main>
 </body>

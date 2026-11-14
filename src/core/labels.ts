@@ -96,3 +96,13 @@ export function lineSpots(s: Omit<Segment, 'kind'>, text: string): Point[] {
     ? [{ x, y }, { x, y: y - dy }, { x, y: y + dy }]
     : [{ x, y }, { x: x + dx, y }, { x: x - dx, y }];
 }
+
+/**
+ * Spots for a measurement's value: `lineSpots`, without the middle when the line is shorter than the label
+ * along it, where the label would cover the line and both boxes' edges. Gap and padding values keep theirs.
+ */
+export function segmentSpots(s: Omit<Segment, 'kind'>, text: string): Point[] {
+  const spots = lineSpots(s, text);
+  const short = s.axis === 'x' ? Math.abs(s.x2 - s.x1) < labelWidth(text) : Math.abs(s.y2 - s.y1) < LABEL_H;
+  return short ? spots.slice(1) : spots;
+}

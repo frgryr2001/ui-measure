@@ -75,7 +75,16 @@ function SegmentLine({ s, color }: { s: Omit<Segment, 'kind'>; color: string }) 
     s.axis === 'x'
       ? `M${s.x1} ${s.y1 - TICK}V${s.y1 + TICK}M${s.x2} ${s.y2 - TICK}V${s.y2 + TICK}`
       : `M${s.x1 - TICK} ${s.y1}H${s.x1 + TICK}M${s.x2 - TICK} ${s.y2}H${s.x2 + TICK}`;
-  return <path d={`M${s.x1} ${s.y1}L${s.x2} ${s.y2}${ticks}`} stroke={color} strokeWidth={1} shapeRendering="crispEdges" />;
+  // under 2 ticks long the end ticks merge into one mark: arrows point at both ends from outside (CAD style →| |←)
+  const lo = s.axis === 'x' ? Math.min(s.x1, s.x2) : Math.min(s.y1, s.y2);
+  const hi = s.axis === 'x' ? Math.max(s.x1, s.x2) : Math.max(s.y1, s.y2);
+  const arrows =
+    hi - lo >= 2 * TICK
+      ? ''
+      : s.axis === 'x'
+        ? `M${lo - 3 * TICK} ${s.y1}H${lo}M${lo - TICK} ${s.y1 - TICK}L${lo} ${s.y1}L${lo - TICK} ${s.y1 + TICK}M${hi + 3 * TICK} ${s.y1}H${hi}M${hi + TICK} ${s.y1 - TICK}L${hi} ${s.y1}L${hi + TICK} ${s.y1 + TICK}`
+        : `M${s.x1} ${lo - 3 * TICK}V${lo}M${s.x1 - TICK} ${lo - TICK}L${s.x1} ${lo}L${s.x1 + TICK} ${lo - TICK}M${s.x1} ${hi + 3 * TICK}V${hi}M${s.x1 - TICK} ${hi + TICK}L${s.x1} ${hi}L${s.x1 + TICK} ${hi + TICK}`;
+  return <path d={`M${s.x1} ${s.y1}L${s.x2} ${s.y2}${ticks}${arrows}`} fill="none" stroke={color} strokeWidth={1} shapeRendering="crispEdges" />;
 }
 
 const ConnectorLine = ({ c }: { c: Connector }) => (
@@ -115,7 +124,7 @@ const Hint = ({ hint: { box, parts } }: { hint: PlacedHint }) => (
 );
 
 export function Overlay({ frame }: { frame: Frame }) {
-  const { hover, selected, selection, measuring, measurement, gaps, labels, details, hint } = frame;
+  const { hover, hoverTouch, selected, selection, measuring, measurement, gaps, labels, details, hint } = frame;
   return (
     <>
       <svg
@@ -138,8 +147,8 @@ export function Overlay({ frame }: { frame: Frame }) {
         )}
         {hover && !measuring && (
           <>
-            <Bands rects={ring(hover.margin, hover.border)} fill={MARGIN_FILL} />
-            <Bands rects={ring(hover.padding, hover.content)} fill={PADDING_FILL} />
+            <Bands rects={ring(hover.margin, hover.border, hoverTouch)} fill={MARGIN_FILL} />
+            <Bands rects={ring(hover.padding, hover.content, hoverTouch)} fill={PADDING_FILL} />
           </>
         )}
         {hover && <Outline r={hover.border} color={measuring ? RED : BLUE} strokeWidth={1} />}

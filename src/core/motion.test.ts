@@ -74,7 +74,7 @@ describe('followMeasurement', () => {
     const b = box(200, 10, 50, 40);
     // drawn 50px short of where it is: the line is 50 long, the number stays 100
     const shown = box(150, 10, 50, 40);
-    expect(followMeasurement(a, a, b, shown)).toEqual({
+    expect(followMeasurement(a, a, b, shown, 0.5)).toEqual({
       segments: [{ kind: 'spacing', axis: 'x', x1: 100, y1: 25, x2: 150, y2: 25, value: 100 }],
       connectors: [],
     });
@@ -84,7 +84,7 @@ describe('followMeasurement', () => {
     const a = box(0, 0, 100, 40);
     const b = box(130, 70, 50, 50);
     const shown = box(160, 90, 50, 50);
-    expect(followMeasurement(a, a, b, shown)).toEqual({
+    expect(followMeasurement(a, a, b, shown, 0.5)).toEqual({
       segments: [
         { kind: 'spacing', axis: 'x', x1: 100, y1: 20, x2: 160, y2: 20, value: 30 },
         { kind: 'spacing', axis: 'y', x1: 50, y1: 40, x2: 50, y2: 90, value: 30 },
@@ -100,7 +100,7 @@ describe('followMeasurement', () => {
     const a = box(0, 0, 100, 40);
     const b = box(130, 70, 50, 50);
     const shown = box(10, 8, 20, 16);
-    expect(followMeasurement(a, a, b, shown)).toEqual({
+    expect(followMeasurement(a, a, b, shown, 0.5)).toEqual({
       segments: [
         { kind: 'spacing', axis: 'x', x1: 100, y1: 20, x2: 10, y2: 20, value: 30 },
         { kind: 'spacing', axis: 'y', x1: 50, y1: 40, x2: 50, y2: 8, value: 30 },
@@ -116,7 +116,7 @@ describe('followMeasurement', () => {
     const a = box(0, 0, 200, 200);
     const b = box(50, 50, 50, 50);
     const shown = box(-80, 50, 50, 50);
-    expect(followMeasurement(a, a, b, shown)).toEqual({
+    expect(followMeasurement(a, a, b, shown, 0.5)).toEqual({
       segments: [
         { kind: 'inset', axis: 'y', x1: 75, y1: 0, x2: -55, y2: 50, value: 50 },
         { kind: 'inset', axis: 'x', x1: -30, y1: 75, x2: 200, y2: 75, value: 100 },

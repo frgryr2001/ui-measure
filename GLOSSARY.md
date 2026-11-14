@@ -28,7 +28,7 @@ The union of the bounds of every selected element. Measurements are taken from i
 The set of distances shown between the selection bounds and the hover target while the user holds Alt. Temporary: it disappears when Alt is released. Each distance is a spacing, an inset or an offset.
 
 **Touching**
-Two edges closer than half a device pixel, the smallest step the screen can show. The distance between touching edges is not drawn or labelled, whether it would be a spacing, an inset, an offset, a gap or a padding. A W × H is always shown.
+Two edges at most half a device pixel apart, the smallest step the screen can show: `0.5 / devicePixelRatio` CSS px, counted in the element's CSS px inside CSS `zoom` (see CSS px). The distance between touching edges is not drawn or labelled, whether it would be a spacing, an inset, an offset, a gap or a padding, with no "≈0" cue. It depends on the display: a 0.3px spacing touches at DPR 1 and shows at DPR 2. A W × H is always shown (under 0.01 as "<0.01").
 
 **Spacing**
 The empty distance between two boxes that do not touch along an axis.

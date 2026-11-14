@@ -564,6 +564,39 @@ try {
   await evaluate(sw, `chrome.tabs.setZoom(${tabId}, 0)`);
   console.log('ok  browser zoom 125%: labels unchanged');
 
+  // small distances at DPR 1: half a device pixel or less is touching, so 0.25 is not drawn; a 1px spacing's label sits beside its line
+  await poll('DPR 1 after browser zoom', () => evaluate(page, 'devicePixelRatio'), (r) => r === 1);
+  await evaluate(page, `document.querySelector('#tiny').scrollIntoView({ block: 'center' })`);
+  const redNumbers = async () => (await redLabels()).filter((t) => !t.startsWith('⌥'));
+  const measureTiny = async (id) => {
+    const [ta, tb] = [`#${id} > .tile:nth-child(1)`, `#${id} > .tile:nth-child(2)`];
+    await select(await center(ta));
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+    await mouse('mouseMoved', await center(tb), 1);
+    // positive proof first: measuring, with the hover target on the second tile
+    const [tbRect] = await rectsOf([tb]);
+    await poll(`${id}: measuring onto the second tile`, async () => ({ o: await overlay(), h: await hoverOutlines() }), ({ o, h }) => o.chip === '⌥ measuring' && h.includes(tbRect));
+  };
+  const altUp = () => send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  await measureTiny('tiny-1');
+  await poll('1px spacing labelled', redNumbers, (l) => JSON.stringify(l) === '["1"]');
+  await poll('1px spacing line settled', linePaths, linesSettled);
+  const onLine = await evaluate(page, `(() => {
+    const root = document.querySelector('ui-measure-root').shadowRoot;
+    const [x1, y1, x2, y2] = root.querySelector('path[stroke="#f24822"]').getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+    const r = [...root.querySelectorAll('rect[fill="#f24822"]')].find((r) => r.nextElementSibling?.textContent === '1');
+    const [x, y, w, h] = ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a));
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    return { line: [x1, y1, x2, y2], label: [x, y, w, h], covers: mx >= x && mx <= x + w && my >= y && my <= y + h };
+  })()`);
+  assert.equal(onLine.covers, false, `the 1px spacing's label must sit beside its line: ${JSON.stringify(onLine)}`);
+  await altUp();
+  await measureTiny('tiny-025');
+  assert.deepEqual([(await overlay()).lines, await redNumbers()], [0, []], '0.25px spacing at DPR 1: touching, no line or label');
+  await altUp();
+  console.log('ok  small distances at DPR 1: 0.25 spacing not drawn, 1px spacing labelled beside its line');
+
   // shadow roots, open and closed (chrome.dom.openOrClosedShadowRoot): select, climb and type inside them
   await press('Escape', 'Escape', 27);
   for (const mode of ['open', 'closed']) {

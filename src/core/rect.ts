@@ -26,14 +26,14 @@ export const scaleEdges = (e: Edges, sx: number, sy: number): Edges => ({
   left: e.left * sx,
 });
 
-/** The band between `outer` and `inner` as up to 4 non-overlapping rects. */
-export function ring(outer: Rect, inner: Rect): Rect[] {
+/** The band between `outer` and `inner` as up to 4 non-overlapping rects, each thicker than `min` (`touchLimit`). */
+export function ring(outer: Rect, inner: Rect, min = 0): Rect[] {
   return [
     { left: outer.left, top: outer.top, right: outer.right, bottom: inner.top },
     { left: outer.left, top: inner.bottom, right: outer.right, bottom: outer.bottom },
     { left: outer.left, top: inner.top, right: inner.left, bottom: inner.bottom },
     { left: inner.right, top: inner.top, right: outer.right, bottom: inner.bottom },
-  ].filter((r) => width(r) > 0 && height(r) > 0);
+  ].filter((r) => width(r) > min && height(r) > min);
 }
 
 /** Smallest rect containing all of `rects`; null when there are none. */
@@ -50,5 +50,8 @@ export const union = (rects: Rect[]): Rect | null =>
 /** Label text: at most 2 decimals, no trailing zeros ("16", "16.5", "16.33"). */
 export const formatPx = (n: number) => String(Number(n.toFixed(2)));
 
+// a box that is there never reads "0"
+const sideText = (n: number) => (n > 0 && n < 0.01 ? '<0.01' : formatPx(n));
+
 /** W × H of `r` (viewport px) in CSS px of an element under CSS `zoom` (`currentCSSZoom`). */
-export const sizeLabel = (r: Rect, zoom = 1) => `${formatPx(width(r) / zoom)} × ${formatPx(height(r) / zoom)}`;
+export const sizeLabel = (r: Rect, zoom = 1) => `${sideText(width(r) / zoom)} × ${sideText(height(r) / zoom)}`;

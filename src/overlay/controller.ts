@@ -2,8 +2,8 @@ import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint'
 import { blueprintKids, bounds, deepElementAt, isTypingInPage, lookAt, parentOf, readBoxes, readGaps, readRadii, readSpec, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
-import { LABEL_H, labelWidth, lineSpots, placeLabels, sizeSpots, type Anchors, type Label } from '../core/labels';
-import { EPSILON, mid, type Measurement } from '../core/measure';
+import { LABEL_H, labelWidth, lineSpots, placeLabels, segmentSpots, sizeSpots, type Anchors, type Label } from '../core/labels';
+import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
@@ -25,6 +25,8 @@ const DETAILS = { rootGap: 1, rootPadding: 0.97, rootRadius: 0.95, size: 0.5, si
 /** Everything the overlay draws for one animation frame. Plain numbers only. */
 export type Frame = {
   hover: Boxes | null;
+  /** Viewport px at or under which the hover target's bands are touching and not drawn (`touchLimit`). */
+  hoverTouch: number;
   /** Bounds of each selected element. */
   selected: Rect[];
   /** Union of `selected`: what measurements are taken from. */
@@ -193,6 +195,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     selected = selected.filter((el) => el.isConnected);
     if (selected.length === 0) blueprint = false;
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+    // read every frame: browser zoom and moving the window to another display change it
+    const dpr = window.devicePixelRatio;
     const target = pointer ? deepElementAt(pointer.x, pointer.y, host, shadowOf) : null;
     const selectedRects = selected.map(bounds);
     const selRect = union(selectedRects);
@@ -210,15 +214,17 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       ? { margin: glidedSel[0] ?? singleBoxes.margin, border: glidedSel[1] ?? singleBoxes.border, padding: glidedSel[2] ?? singleBoxes.padding, content: glidedSel[3] ?? singleBoxes.content }
       : null;
     const shownSel = shownSingle?.border ?? glidedSel[0] ?? selRect;
+    // a measurement's numbers are in CSS px of the nearest element containing both ends
+    const measureZoom = measuring && target ? zoomOf([...selected, target]) : 1;
     const measurement = measuring && hover && selRect && shownSel && shownHover && target && !selected.includes(target)
-      ? followMeasurement(selRect, shownSel, hover.border, shownHover.border)
+      ? followMeasurement(selRect, shownSel, hover.border, shownHover.border, touchLimit(dpr, measureZoom))
       : null;
     // details: one selected element, or with `B` the last-selected one and its descendants
     const root = measuring ? undefined : blueprint ? selected.at(-1) : selected.length === 1 ? selected[0] : undefined;
     // re-collected every frame like everything else, so scrolling reveals what the viewport cut
     const bp = root && blueprint ? collect(root, (el) => blueprintKids(el, host, shadowOf), lookAt, viewport) : null;
     // the root from the element itself: collect drops one under 8px or out of view
-    const kept = (root ? [root, ...(bp?.nodes ?? []).map((k) => k.node).filter((n) => n !== root)] : []).map((node) => ({ node, boxes: readBoxes(node) }));
+    const kept = (root ? [root, ...(bp?.nodes ?? []).map((k) => k.node).filter((n) => n !== root)] : []).map((node) => ({ node, boxes: readBoxes(node), touch: touchLimit(dpr, zoomOf([node])) }));
     // the one selected element's own boxes are the ones gliding; Blueprint descendants stay where they are
     const drawnBoxes = (node: Element, boxes: Boxes) => (shownSingle && node === single ? shownSingle : boxes);
     const drawnGap = (el: Element, g: Gap): Gap => {
@@ -227,7 +233,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       const b = followPoint(singleBoxes.border, shownSingle.border, g.x2, g.y2);
       return { ...g, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
     };
-    const gapsOf = kept.map((k) => ({ el: k.node, gaps: readGaps(k.node, host, shadowOf).map((g) => drawnGap(k.node, g)) }));
+    const gapsOf = kept.map((k) => ({ el: k.node, gaps: readGaps(k.node, host, shadowOf, k.touch).map((g) => drawnGap(k.node, g)) }));
     const corners = kept.map((k) => ({ el: k.node, box: drawnBoxes(k.node, k.boxes).border, radii: readRadii(k.node, k.boxes.border) }));
 
     const labels: (Label & { kind: LabelKind })[] = [];
@@ -244,8 +250,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     }
     if (measurement && target) {
       const key = `m:${selected.map(idOf).join()}>${idOf(target)}`;
-      const z = zoomOf([...selected, target]);
-      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / z), 'measure', PRIORITY.measure, (t) => lineSpots(s, t)));
+      measurement.segments.forEach((s, i) => add(`${key}:${i}`, formatPx(s.value / measureZoom), 'measure', PRIORITY.measure, (t) => segmentSpots(s, t)));
     }
     // sizes are hidden while measuring: they sit where the vertical spacing label usually goes
     if (selRect && !measuring) {
@@ -267,7 +272,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const area = width(viewport) * height(viewport);
     // a hovered node's labels come back first, like its hover size (ticket 06)
     const boostOf = (el: Element) => (el === target ? DETAILS.hoverBoost : 0);
-    for (const { node, boxes } of kept) {
+    for (const { node, boxes, touch } of kept) {
       const id = idOf(node);
       const z = zoomOf([node]);
       const drawn = drawnBoxes(node, boxes);
@@ -287,7 +292,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
         [rc.left - rp.left, mid(p.left, c.left), mid(p.top, p.bottom)],
       ] as const;
       sides.forEach(([value, x, y], i) => {
-        if (value > EPSILON) add(`pad:${id}:${i}`, formatPx(value / z), 'padding', boost + (node === root ? DETAILS.rootPadding : DETAILS.padding), () => [{ x, y }], true);
+        if (value > touch) add(`pad:${id}:${i}`, formatPx(value / z), 'padding', boost + (node === root ? DETAILS.rootPadding : DETAILS.padding), () => [{ x, y }], true);
       });
     }
     for (const { el, gaps } of gapsOf) {
@@ -309,6 +314,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
 
     const frame: Frame = {
       hover: shownHover,
+      hoverTouch: touchLimit(dpr, target ? zoomOf([target]) : 1),
       selected: selected.length === 1 && shownSel ? [shownSel] : selectedRects,
       selection: shownSel,
       measuring,
@@ -319,7 +325,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
         outlines: kept.filter((k) => k.node !== root).map((k) => k.boxes.border),
         padding: kept.flatMap((k) => {
           const b = drawnBoxes(k.node, k.boxes);
-          return ring(b.padding, b.content);
+          return ring(b.padding, b.content, k.touch);
         }),
         corners: corners.filter((c) => c.radii.some(rounded)).map(({ box, radii }) => ({ box, radii })),
       } : null,

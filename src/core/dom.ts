@@ -62,8 +62,8 @@ export const parentOf = (el: Element): Element | null =>
 const childrenOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element[] =>
   [...(shadowOf(el) ?? el).children].filter((c) => c !== ignore && c.getClientRects().length > 0);
 
-/** Gaps between the in-flow children of a flex or grid container; none for other elements. */
-export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf): Gap[] {
+/** Gaps between the in-flow children of a flex or grid container, wider than `touch` (`touchLimit`); none for other elements. */
+export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf, touch: number): Gap[] {
   const cs = getComputedStyle(el);
   const flex = cs.display.includes('flex');
   if (!flex && !cs.display.includes('grid')) return [];
@@ -72,7 +72,7 @@ export function readGaps(el: Element, ignore: Element, shadowOf: ShadowOf): Gap[
     .map(bounds);
   // shortcut: assumes horizontal writing-mode; swap the axes once vertical-rl / vertical-lr pages need gaps.
   // a grid flows like wrapping rows
-  return flex ? gaps(items, cs.flexDirection.startsWith('column') ? 'y' : 'x', cs.flexWrap !== 'nowrap') : gaps(items, 'x', true);
+  return flex ? gaps(items, cs.flexDirection.startsWith('column') ? 'y' : 'x', cs.flexWrap !== 'nowrap', touch) : gaps(items, 'x', true, touch);
 }
 
 const isZero = (e: Edges) => !e.top && !e.right && !e.bottom && !e.left;
