@@ -63,9 +63,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  * takes its first free `away` spot whose leader is at most MAX_LEADER long and crosses no label; later labels keep
  * off placed leaders. A label with no free spot is hidden. `taken`: boxes placed before every label (the Hint),
  * which labels move out of the way of; a label whose near spots are blocked only by them is hidden, not led away,
- * so the moving Hint never sends values onto leaders.
+ * so the moving Hint never sends values onto leaders. `clear`: boxes whose words stay readable (a one-line
+ * control). A spot on one is skipped, and the label may still move onto a leader; the Hint is the only obstacle
+ * that hides a value instead.
  */
-export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors, taken: Rect[] = []): { shown: (L & { box: Rect; leader?: Leader })[]; anchors: Anchors } {
+export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors, taken: Rect[] = [], clear: Rect[] = []): { shown: (L & { box: Rect; leader?: Leader })[]; anchors: Anchors } {
   // uniform grid of placed boxes and leaders, so each test only looks at nearby ones
   type Placed = { r: Rect; hint?: true; leader?: Leader };
   const grid = new Map<number, Placed[]>();
@@ -101,6 +103,8 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
   const next: Anchors = new Map();
   const later: L[] = [];
   const sorted = [...labels].sort((a, b) => b.priority - a.priority);
+  // same gap a label keeps from another label: 4px, so a value does not sit on the descenders
+  const onWords = (r: Rect) => clear.some((c) => hits(r, c));
   const boxer = (l: L) => {
     const w = labelWidth(l.text);
     const hi = { x: viewport.right - APART - w, y: viewport.bottom - APART - LABEL_H };
@@ -116,7 +120,7 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
     const spots = [...l.at.map(box), ...(l.pinned ? [] : l.at.map(pushed))];
     const fits = (i: number) => {
       const r = spots[i];
-      return !!r && inside(r) && !blocked(r);
+      return !!r && inside(r) && !onWords(r) && !blocked(r);
     };
     const last = anchors.get(l.id);
     const i = last !== undefined && fits(last) ? last : spots.findIndex((_, j) => fits(j));
@@ -133,10 +137,10 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
     for (const a of l.away ?? []) {
       const r = box(a.at);
       const leader = a.from && { x1: a.from.x, y1: a.from.y, x2: clamp(a.from.x, r.left, r.right), y2: clamp(a.from.y, r.top, r.bottom) };
-      if (!inside(r) || (leader && Math.hypot(leader.x2 - leader.x1, leader.y2 - leader.y1) > MAX_LEADER)) continue;
+      if (!inside(r) || onWords(r) || (leader && Math.hypot(leader.x2 - leader.x1, leader.y2 - leader.y1) > MAX_LEADER)) continue;
       const by = blocked(r);
-      // the Hint moves with the pointer: hidden under it, not sent to the next spot
-      if (by === 'hint') break;
+      // the Hint covers this spot only: try the next one. A near spot under the Hint never reaches here
+      // (pass 1 keeps the value hidden rather than leading it away), so a later leader can still show it.
       if (by) continue;
       if (leader) {
         const span: Rect = { left: Math.min(leader.x1, leader.x2), top: Math.min(leader.y1, leader.y2), right: Math.max(leader.x1, leader.x2), bottom: Math.max(leader.y1, leader.y2) };
@@ -154,15 +158,63 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
 // space between a label and the box or line it describes
 const CLEARANCE = 4;
 
-/** Spots for a box's W × H: below it, above it, then inside at the bottom and the top-left corner. */
+/**
+ * Shortest box whose inside spots leave a centered 16px line of text readable, with APART between them.
+ * An inside label sits CLEARANCE off the border, so its top is `h - 22`; the line ends at `(h + 16) / 2`.
+ * The gap is `h / 2 - 30`, and that is at least APART only once `h` reaches 68. Below that the interior
+ * is the words: a W × H or a radius drawn there covers them (a 28px button, a 32px chip).
+ */
+export const TEXT_SAFE = 68;
+
+/**
+ * Spots for a box's W × H: below it, above it, then inside at the bottom and the top-left corner
+ * when the box is tall enough to keep a line of text clear and the whole label fits there, then outside
+ * to the right and the left. A label that merely fits a short box used to take the inside spot and sit
+ * on the words. Below is an extra half-label down. A padding value centered in a band thinner than the
+ * label hangs past the border; without that room the size takes the middle of the bottom side and the
+ * padding slides to the end of its band.
+ */
 export function sizeSpots(b: Rect, text: string): Point[] {
   const x = mid(b.left, b.right);
-  return [
-    { x, y: b.bottom + CLEARANCE + LABEL_H / 2 },
+  const w = labelWidth(text);
+  const spots: Point[] = [
+    { x, y: b.bottom + CLEARANCE + LABEL_H },
     { x, y: b.top - CLEARANCE - LABEL_H / 2 },
-    { x, y: b.bottom - CLEARANCE - LABEL_H / 2 },
-    { x: b.left + CLEARANCE + labelWidth(text) / 2, y: b.top + CLEARANCE + LABEL_H / 2 },
   ];
+  if (b.bottom - b.top >= TEXT_SAFE && w + 2 * CLEARANCE <= b.right - b.left && LABEL_H + 2 * CLEARANCE <= b.bottom - b.top) {
+    spots.push(
+      { x, y: b.bottom - CLEARANCE - LABEL_H / 2 },
+      { x: b.left + CLEARANCE + w / 2, y: b.top + CLEARANCE + LABEL_H / 2 },
+    );
+  }
+  const y = mid(b.top, b.bottom);
+  spots.push({ x: b.right + CLEARANCE + w / 2, y }, { x: b.left - CLEARANCE - w / 2, y });
+  return spots;
+}
+
+/**
+ * Pass-2 spots of a W × H whose near spots are taken or would cover a one-line control. Straight out
+ * first, then one label-width to either side so the leader can leave from the corner and miss a number
+ * already centered on that side. 40 is MAX_LEADER.
+ */
+export function sizeAway(b: Rect, text: string): Away[] {
+  const w = labelWidth(text);
+  const x = mid(b.left, b.right);
+  const y = mid(b.top, b.bottom);
+  const slide = w + APART;
+  const edge = (v: number) => clamp(v, b.left, b.right);
+  const away: Away[] = [];
+  for (const d of [16, 32, 40] as const) {
+    for (const s of [0, 1, -1]) {
+      const atX = x + s * slide;
+      away.push(
+        { at: { x: atX, y: b.bottom + d + LABEL_H / 2 }, from: { x: edge(atX), y: b.bottom } },
+        { at: { x: atX, y: b.top - d - LABEL_H / 2 }, from: { x: edge(atX), y: b.top } },
+      );
+    }
+    away.push({ at: { x: b.right + d + w / 2, y }, from: { x: b.right, y } }, { at: { x: b.left - d - w / 2, y }, from: { x: b.left, y } });
+  }
+  return away;
 }
 
 /**

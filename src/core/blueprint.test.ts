@@ -145,24 +145,32 @@ describe('radiusLabels', () => {
   const b: Rect = { left: 0, top: 0, right: 200, bottom: 100 };
   const texts = (c: Corners) => radiusLabels(b, c).map((l) => l.text);
 
-  it('four equal corners: one label, inside the top-left corner first, then the other corners, then outside', () => {
+  it('four equal corners: one label, inside each corner first, then outside each corner on a leader', () => {
     const [l] = radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]]);
     expect(l?.text).toBe('r 12');
     const at = l?.at ?? [];
     const quadrant = ({ x, y }: { x: number; y: number }) => `${x < 100 ? 'l' : 'r'}${y < 50 ? 't' : 'b'}`;
     const inBox = ({ x, y }: { x: number; y: number }) => x > 0 && x < 200 && y > 0 && y < 100;
-    expect(at.map(quadrant)).toEqual(['lt', 'rt', 'rb', 'lb', 'lt', 'rt', 'rb', 'lb']);
-    expect(at.map(inBox)).toEqual([true, true, true, true, false, false, false, false]);
+    expect(at.map(quadrant)).toEqual(['lt', 'rt', 'rb', 'lb']);
+    expect(at.map(inBox)).toEqual([true, true, true, true]);
+    const outside = l?.away.slice(0, 4) ?? [];
+    expect(outside.map((a) => quadrant(a.at))).toEqual(['lt', 'rt', 'rb', 'lb']);
+    expect(outside.map((a) => inBox(a.at))).toEqual([false, false, false, false]);
+    expect(outside.every((a) => a.from)).toBe(true);
+    expect(outside.map((a) => a.at.x)).toEqual(at.map((p) => p.x));
     expect(radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]])).toHaveLength(1);
   });
 
-  it('a corner of its own: inside it, then just below it, in line', () => {
+  it('a corner of its own: inside it, then just below it, led from the arc', () => {
     const [, , l] = radiusLabels(b, [[8, 8], [8, 8], [20, 20], [8, 8]]);
     expect(l?.text).toBe('r 20');
-    expect(l?.at).toHaveLength(2);
-    const [inside, outside] = l?.at ?? [];
+    expect(l?.at).toHaveLength(1);
+    const inside = l?.at[0];
+    const outside = l?.away[0];
     expect(inside && inside.x < 200 && inside.y < 100 && inside.x > 100 && inside.y > 50).toBe(true);
-    expect(outside && outside.x === inside?.x && outside.y > 100).toBe(true);
+    expect(outside?.at.x).toBe(inside?.x);
+    expect(outside && outside.at.y > 100).toBe(true);
+    expect(outside?.from).toEqual({ x: 200 - 20 * (1 - Math.SQRT1_2), y: 100 - 20 * (1 - Math.SQRT1_2) });
   });
 
   it('different corners: one label each, ellipses as x/y, corners under 1px dropped', () => {

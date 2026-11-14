@@ -1,4 +1,4 @@
-import { AWAY, LABEL_H, labelWidth, type Away } from './labels';
+import { AWAY, LABEL_H, TEXT_SAFE, labelWidth, type Away } from './labels';
 import { formatPx, height, width, type Rect } from './rect';
 
 /** One corner's radius: [horizontal, vertical] semi-axes in px. */
@@ -38,11 +38,14 @@ const radiusText = ([x, y]: Corner) => `r ${x === y ? formatPx(x) : `${formatPx(
 
 /**
  * Radius values of box `b`: one label when all four corners match, else one per rounded corner, in
- * CSS px under CSS `zoom`. Spots: on the corner's 45° line 0.3 r + 6 px into the box (research Phần 05 §4.3),
- * then just above / below the corner, outside. On a short box (a pill) every inside spot covers a side padding value,
- * which outranks the radius; outside is the fallback because it lands on the page's content next to it.
- * `away` (pass 2, on a leader from the arc's midpoint): along the 45° line, inward when the label fits in the box,
- * then outward at each AWAY distance. The shared label tries the top-left corner first, then the other three.
+ * CSS px under CSS `zoom`. The near spot is on the corner's 45° line, 0.3 r + 6 px into the box
+ * (research Phần 05 §4.3), only when the box is tall enough to keep a line of text clear (`TEXT_SAFE`)
+ * and the whole label fits in that corner's half. On a button or a chip the corner is the words, so
+ * the value goes straight to a leader. On a short box that spot also covers a side padding value,
+ * which outranks the radius. `away` (pass 2, on a leader from the arc's midpoint):
+ * just above / below the corner, then along the 45° line, inward when the label fits in the box,
+ * then outward at each AWAY distance. The shared label tries the top-left corner first, then the
+ * other three.
  */
 export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[]; away: Away[] }[] {
   const [first] = corners;
@@ -55,11 +58,24 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
     const w = labelWidth(text) / 2;
     const ds = equal ? dirs : dirs.slice(i, i + 1);
     const x = (cx: number, sx: number) => cx + sx * (0.3 * c[0] + 6 + w);
-    const inside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy + sy * (0.3 * c[1] + 6 + LABEL_H / 2) }));
-    // above / below the corner, not diagonally out: beside the box it would take the parent's side padding spot
-    const outside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy - sy * (6 + LABEL_H / 2) }));
-    // leaders (pass 2) start on the arc's midpoint and follow the corner's 45° line: inward when the label fits in the box, then outward
+    const fits = (p: { x: number; y: number }) => p.x - w >= b.left && p.x + w <= b.right && p.y - LABEL_H / 2 >= b.top && p.y + LABEL_H / 2 <= b.bottom;
+    // stay in the corner's own half. A value that crosses the middle sits under the size label on a small box.
+    // a one-line control has no empty corner: the words are there, so there is no near spot.
+    const midX = (b.left + b.right) / 2;
+    const inside =
+      b.bottom - b.top >= TEXT_SAFE
+        ? ds
+            .map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy + sy * (0.3 * c[1] + 6 + LABEL_H / 2), sx }))
+            .filter((p) => fits(p) && (p.sx > 0 ? p.x + w <= midX : p.x - w >= midX))
+            .map(({ x, y }) => ({ x, y }))
+        : [];
+    // leaders (pass 2) start on the arc's midpoint. Just above / below the corner first, not diagonally out:
+    // beside the box it would take the parent's side padding spot. Then the 45° line, inward when the label fits, then outward.
     const k = Math.SQRT1_2;
+    const outside = ds.map(([cx, cy, sx, sy]): Away => ({
+      at: { x: x(cx, sx), y: cy - sy * (6 + LABEL_H / 2) },
+      from: { x: cx + sx * c[0] * (1 - k), y: cy + sy * c[1] * (1 - k) },
+    }));
     const along = (d: number) =>
       ds.map(([cx, cy, sx, sy]) => {
         const from = { x: cx + sx * c[0] * (1 - k), y: cy + sy * c[1] * (1 - k) };
@@ -68,8 +84,8 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
         const sign = Math.sign(d);
         return { at: { x: corner.x + sign * sx * w, y: corner.y + sign * sy * (LABEL_H / 2) }, from };
       });
-    const fitsInside = ({ at: p }: Away) => p.x - w >= b.left && p.x + w <= b.right && p.y - LABEL_H / 2 >= b.top && p.y + LABEL_H / 2 <= b.bottom;
-    return [{ text, at: [...inside, ...outside], away: [...along(AWAY[0]).filter(fitsInside), ...AWAY.flatMap((d) => along(-d))] }];
+    const fitsInside = ({ at: p }: Away) => fits(p);
+    return [{ text, at: inside, away: [...outside, ...along(AWAY[0]).filter(fitsInside), ...AWAY.flatMap((d) => along(-d))] }];
   });
 }
 

@@ -75,14 +75,14 @@ describe('pinned labels (radius, padding, gap)', () => {
     expect(shown).toEqual([]);
   });
 
-  it('pill 120 × 32, padding 0 16, r 16: the radius keeps its corner, the left padding it covers is hidden, not moved', () => {
+  it('pill 120 × 32, r 16: the radius stays off the one line of text, on a leader', () => {
     const pill: Rect = { left: 100, top: 100, right: 220, bottom: 132 };
     const [r] = radiusLabels(pill, [[16, 16], [16, 16], [16, 16], [16, 16]]);
-    const pad = (id: string, x: number): Label => ({ id, text: '16', priority: 0.95, at: [{ x, y: 116 }], pinned: true });
-    const { shown } = placeLabels([pad('left', 108), pad('right', 212), { id: 'r', text: r?.text ?? '', priority: 0.97, at: r?.at ?? [], pinned: true }], VP, new Map());
-    expect(shown.map((l) => l.id)).toEqual(['r', 'right']);
-    expect(shown[0]?.box.left).toBeGreaterThan(pill.left);
-    expect(shown[0]?.box.top).toBeGreaterThan(pill.top);
+    expect(r?.at).toEqual([]);
+    const { shown } = placeLabels([{ id: 'r', text: r?.text ?? '', priority: 0.97, pinned: true, at: r?.at ?? [], away: r?.away }], VP, new Map(), [], [pill]);
+    const radius = shown.find((l) => l.id === 'r');
+    expect(radius?.leader).toBeTruthy();
+    expect(radius && radius.box.bottom <= pill.top).toBe(true);
   });
 });
 
@@ -95,8 +95,9 @@ describe('sizeSpots + placeLabels on a row of tiles', () => {
       VP,
       new Map(),
     );
-    // neighbours' labels would overlap below, so every other one goes above
-    expect(shown.map((l) => l.box.top)).toEqual([144, 78, 144, 78, 144]);
+    // neighbours' labels would overlap below, so every other one goes above.
+    // below sits half a label further down than the 4px clearance, clear of a thin side's padding value
+    expect(shown.map((l) => l.box.top)).toEqual([153, 78, 153, 78, 153]);
     for (const [i, a] of shown.entries())
       for (const b of shown.slice(i + 1)) expect(a.box.right <= b.box.left || b.box.right <= a.box.left || a.box.bottom <= b.box.top || b.box.bottom <= a.box.top).toBe(true);
   });
@@ -247,22 +248,27 @@ describe('leader spots', () => {
     const b: Rect = { left: 100, top: 100, right: 300, bottom: 200 };
     const [l] = radiusLabels(b, [[0, 0], [0, 0], [20, 20], [0, 0]]);
     const away = l?.away ?? [];
-    // the bottom-right arc's midpoint
+    // the bottom-right arc's midpoint. The first spot is just below the corner; the rest walk the 45° line.
     const mid = { x: 300 - 20 * (1 - Math.SQRT1_2), y: 200 - 20 * (1 - Math.SQRT1_2) };
-    expect(away.map((a) => [a.from?.x, a.from?.y])).toEqual(away.map(() => [mid.x, mid.y]));
-    const boxes = away.map((a) => boxOf(a.at, 'r 20'));
+    const outside = away[0];
+    expect(outside?.from).toEqual(mid);
+    expect(outside && boxOf(outside.at, 'r 20').top > b.bottom).toBe(true);
+    const diagonal = away.slice(1);
+    expect(diagonal.map((a) => [a.from?.x, a.from?.y])).toEqual(diagonal.map(() => [mid.x, mid.y]));
+    const boxes = diagonal.map((a) => boxOf(a.at, 'r 20'));
     expect(boxes.map((r) => inBox(r, b))).toEqual([true, false, false]);
     expect(boxes.map((r) => Math.round(dist(mid, r)))).toEqual([16, 16, 32]);
     // up-left into the box, then down-right out of it
-    expect(away[0] && away[0].at.x < mid.x && away[0].at.y < mid.y).toBe(true);
-    expect(away.slice(1).every((a) => a.at.x > mid.x && a.at.y > mid.y)).toBe(true);
+    expect(diagonal[0] && diagonal[0].at.x < mid.x && diagonal[0].at.y < mid.y).toBe(true);
+    expect(diagonal.slice(1).every((a) => a.at.x > mid.x && a.at.y > mid.y)).toBe(true);
   });
 
   it('radius: no inward spot when the label does not fit inside the box; one shared label tries all four corners', () => {
     const pill: Rect = { left: 0, top: 0, right: 120, bottom: 32 };
     const [l] = radiusLabels(pill, [[16, 16], [16, 16], [16, 16], [16, 16]]);
     const boxes = (l?.away ?? []).map((a) => boxOf(a.at, 'r 16'));
-    expect(boxes).toHaveLength(8);
+    // four just-outside spots, then two outward distances at each corner
+    expect(boxes).toHaveLength(12);
     expect(boxes.some((r) => inBox(r, pill))).toBe(false);
   });
 
@@ -293,5 +299,62 @@ describe('leader spots', () => {
     expect(away.map((a) => Math.round(dist({ x: 50, y: 105 }, boxOf(a.at, '10'))))).toEqual([16, 16, 32, 32]);
     expect(away.map((a) => Math.sign(a.at.x - 50))).toEqual([1, -1, 1, -1]);
     expect(lineAway({ axis: 'x', x1: 0, y1: 50, x2: 10, y2: 50, value: 10 }, '10').map((a) => a.at.y)).toEqual([25, 75, 9, 91]);
+  });
+});
+
+describe('size label against side padding', () => {
+  const center = (b: Rect) => ({ x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 });
+  const placed = (labels: Label[]) => {
+    const { shown } = placeLabels(labels, VP, new Map());
+    return Object.fromEntries(shown.map((l) => [l.id, { x: (l.box.left + l.box.right) / 2, y: (l.box.top + l.box.bottom) / 2, leader: !!l.leader }]));
+  };
+  const sidesOf = (border: Rect, pad: number) => {
+    const { left, top, right, bottom } = border;
+    const band = {
+      top: { left, top, right, bottom: top + pad },
+      right: { left: right - pad, top, right, bottom },
+      bottom: { left, top: bottom - pad, right, bottom },
+      left: { left, top, right: left + pad, bottom },
+    };
+    return (['top', 'right', 'bottom', 'left'] as const).map((side) => ({
+      id: side,
+      text: String(pad),
+      priority: 0.97,
+      pinned: true,
+      at: [center(band[side])],
+      away: paddingAway(band[side], border, side, String(pad)),
+    }));
+  };
+
+  it('padding 16 stays in the middle of every side, the bottom one included', () => {
+    const border: Rect = { left: 100, top: 100, right: 560, bottom: 200 };
+    const at = placed([{ id: 'size', text: '460 × 100', priority: 3, at: sizeSpots(border, '460 × 100') }, ...sidesOf(border, 16)]);
+    expect(at.bottom).toEqual({ x: 330, y: 192, leader: false });
+    expect(at.top).toMatchObject({ x: 330, y: 108, leader: false });
+    expect(at.left).toMatchObject({ x: 108, y: 150 });
+    expect(at.right).toMatchObject({ x: 552, y: 150 });
+  });
+
+  it('four different corners do not push the bottom padding off its side', () => {
+    const border: Rect = { left: 100, top: 100, right: 340, bottom: 220 };
+    const radii = radiusLabels(border, [[4, 4], [12, 12], [20, 20], [40, 40]]).map((r, i) => ({
+      id: `r${i}`, text: r.text, priority: 0.95, pinned: true, at: r.at, away: r.away,
+    }));
+    const at = placed([{ id: 'size', text: '240 × 120', priority: 3, at: sizeSpots(border, '240 × 120') }, ...sidesOf(border, 16), ...radii]);
+    expect(at.bottom).toEqual({ x: 220, y: 212, leader: false });
+    expect(['top', 'right', 'bottom', 'left'].every((id) => at[id])).toBe(true);
+  });
+
+  it('a radius with no room inside its corner is led back to the arc, and the side values stay', () => {
+    const border: Rect = { left: 100, top: 100, right: 300, bottom: 180 };
+    const [r] = radiusLabels(border, [[40, 40], [40, 40], [40, 40], [40, 40]]);
+    const at = placed([
+      { id: 'size', text: '200 × 80', priority: 3, at: sizeSpots(border, '200 × 80') },
+      ...sidesOf(border, 12),
+      { id: 'r', text: r?.text ?? '', priority: 0.95, pinned: true, at: r?.at ?? [], away: r?.away },
+    ]);
+    expect(at.r).toMatchObject({ leader: true });
+    expect(at.bottom).toEqual({ x: 200, y: 174, leader: false });
+    expect(['top', 'right', 'bottom', 'left'].every((id) => at[id])).toBe(true);
   });
 });

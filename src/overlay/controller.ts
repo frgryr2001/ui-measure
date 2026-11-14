@@ -2,7 +2,7 @@ import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint'
 import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
-import { LABEL_H, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
+import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
@@ -243,8 +243,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
 
     const labels: (Label & { kind: LabelKind })[] = [];
     // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden
-    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away']) =>
-      labels.push({ id, text, kind, priority, at: at(text), pinned: !!away, away: away?.(text) });
+    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away'], pinned = !!away) =>
+      labels.push({ id, text, kind, priority, at: at(text), ...(pinned ? { pinned: true } : {}), away: away?.(text) });
     if (toast && performance.now() > toast.until) toast = null;
     if (toast) {
       // the top spot for when the hint sits on the bottom one
@@ -259,11 +259,11 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     }
     // sizes are hidden while measuring: they sit where the vertical spacing label usually goes
     if (selRect && !measuring) {
-      add(`sel:${selected.map(idOf).join()}`, sizeLabel(selRect, zoomOf(selected)), 'size', PRIORITY.selection, (t) => sizeSpots(shownSel ?? selRect, t));
+      add(`sel:${selected.map(idOf).join()}`, sizeLabel(selRect, zoomOf(selected)), 'size', PRIORITY.selection, (t) => sizeSpots(shownSel ?? selRect, t), (t) => sizeAway(shownSel ?? selRect, t), false);
     }
     // hovering the one selected element would repeat its size label
     if (hover && target && !measuring && !(selected.length === 1 && selected[0] === target)) {
-      add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots((shownHover ?? hover).border, t));
+      add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots((shownHover ?? hover).border, t), (t) => sizeAway((shownHover ?? hover).border, t), false);
     }
     if (bp && root) {
       const r = shownSingle && root === single ? shownSingle.border : bounds(root);
@@ -283,7 +283,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       const drawn = drawnBoxes(node, boxes);
       const boost = boostOf(node);
       if (node !== root && node !== target) {
-        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t));
+        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t), (t) => sizeAway(boxes.border, t), false);
       }
       // the number is the real padding; the spot rides the band that is on screen
       const p = drawn.padding;
@@ -315,7 +315,16 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
     const parts = hintParts(hintState);
     const hint = pointer && !measuring ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
-    const placed = placeLabels(labels, viewport, anchors, hint ? [hint.box] : []);
+    // a one-line control's words: labels may sit in its padding, never on the text
+    const words = (border: Rect, content: Rect): Rect[] => (height(border) < TEXT_SAFE && width(content) > 0 && height(content) > 0 ? [content] : []);
+    const clear = [
+      ...kept.flatMap((k) => {
+        const b = drawnBoxes(k.node, k.boxes);
+        return words(b.border, b.content);
+      }),
+      ...(shownHover ? words(shownHover.border, shownHover.content) : []),
+    ];
+    const placed = placeLabels(labels, viewport, anchors, hint ? [hint.box] : [], clear);
     // a gliding label sweeps across others: keep the spots from before, or they'd stay where it pushed them
     if (!glideHover.moving && !glideSelection.moving) anchors = placed.anchors;
 
