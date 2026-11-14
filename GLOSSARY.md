@@ -4,7 +4,7 @@
 The tool's ON state, scoped to one browser tab. Off by default; turning it on or off never affects other tabs.
 
 **Hint**
-The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, children (Blueprint), parent), naming each key as the user's keyboard prints it (`⌥ Option` on a Mac, `Alt` elsewhere). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
+The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, styles, children (Blueprint), parent), naming each key as the user's keyboard prints it (`⌥ Option` on a Mac, `Alt` elsewhere). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
 
 **Bounds**
 The outer edge of an element's visible box (its border edge, after transforms). Every measurement is taken between bounds, never between padding or content edges.
@@ -46,6 +46,10 @@ The empty distance between consecutive children of one container, whatever makes
 
 **Spec**
 What Copy (`C`) writes for the last-selected element as CSS: a selector that finds it again, its bounds' W × H (border box), padding, border and corner radius.
+
+**Styles**
+`I` with a selection: the computed CSS of the last-selected element that the overlay does not draw (display and layout, font and color, fill, border, shadow and other effects, margin): display, the font and color always, the rest only where it differs from the default, in a panel beside the selection. It is the one place a margin has numbers. `I` or `Esc` closes it; hidden while measuring; shown alongside Blueprint.
+_Avoid_: info, tooltip (that is the Hint), inspector
 
 **Blueprint**
 `B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline and W × H, plus hatched padding, gaps and corner radius. A wrapper whose only child has its bounds counts as one box (with the wrapper's radius when the child has none); depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.

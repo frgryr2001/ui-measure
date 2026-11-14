@@ -2,6 +2,7 @@ import { classify, keptInChain, radii, same, type Corner, type Corners, type Loo
 import { gapFlow, gaps, type Gap } from './gap';
 import { height, inset, scaleEdges, scaleOf, width, type Edges, type Rect } from './rect';
 import { selectorOf, type Spec, type Step } from './spec';
+import { DEFAULTS, STYLE_PROPERTIES, type Computed } from './styles';
 
 export type Boxes = { margin: Rect; border: Rect; padding: Rect; content: Rect };
 
@@ -204,4 +205,15 @@ export function readSpec(el: Element): Spec {
     border: { width: border, style: cs.getPropertyValue(`border-${side}-style`), color: cs.getPropertyValue(`border-${side}-color`) },
     radius: cssRadii(el, b, z),
   };
+}
+
+/**
+ * The computed style Styles shows for `el` (see `styleRows`). Already CSS px inside CSS `zoom` (Chrome 148:
+ * `zoom: 1.5` reads font-size 16px, margin 16px), so unlike bounds and radii nothing divides by `currentCSSZoom`.
+ */
+export function readStyles(el: Element): Computed {
+  const cs = getComputedStyle(el);
+  const read: Computed = { ...DEFAULTS };
+  for (const p of STYLE_PROPERTIES) read[p] = cs.getPropertyValue(p);
+  return read;
 }

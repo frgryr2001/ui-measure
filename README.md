@@ -90,5 +90,7 @@ Spec: [docs/spec.md](docs/spec.md). One ticket per file in `.scratch/ui-measure/
 | 19 | Theme tokens (`src/overlay/theme.ts`, role names, defaults unchanged) | 18 | done (manual look left) |
 | 20 | Leaders, same-size wrappers on click, block gaps (+ perf baseline) | 19 | done (real pages: checklist 14, 15) |
 | 21 | Platform keys (`⌥ Option` / `Alt` in the Hint, toggle `Ctrl/Cmd+Shift+E`) | — | done (Windows IME: checklist 16) |
+| 22 | Styles read and format (`src/core/styles.ts`) | — | done |
+| 23 | Styles panel (`I`) | 22 | ready |
 
 Out of scope: Firefox/Safari, plugin API, MCP bridge, pixel-based measuring, remembering ON per site.

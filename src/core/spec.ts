@@ -35,7 +35,8 @@ const px = (n: number) => (formatPx(n) === '0' ? '0' : `${formatPx(n)}px`);
 
 // CSS 1–4 value shorthand, for padding (top right bottom left) and radius (tl tr br bl) alike
 const four = ([a, b, c, d]: Four) => (b !== d ? `${a} ${b} ${c} ${d}` : a !== c ? `${a} ${b} ${c}` : a !== b ? `${a} ${b}` : a);
-const edges = (e: Edges) => four([px(e.top), px(e.right), px(e.bottom), px(e.left)]);
+/** `e` as a CSS 1–4 value shorthand, 0 without a unit (`0 0 16px`). */
+export const shorthand = (e: Edges) => four([px(e.top), px(e.right), px(e.bottom), px(e.left)]);
 
 /** The rule's declarations, as [property, value]. */
 function declarations(s: Spec): [string, string][] {
@@ -45,7 +46,7 @@ function declarations(s: Spec): [string, string][] {
     ? [['border', '0']]
     : widths.every((v) => v === widths[0])
       ? [['border', `${px(w.top)} ${style} ${color}`]]
-      : [['border-width', edges(w)], ['border-style', style], ['border-color', color]];
+      : [['border-width', shorthand(w)], ['border-style', style], ['border-color', color]];
   const x = four([px(s.radius[0][0]), px(s.radius[1][0]), px(s.radius[2][0]), px(s.radius[3][0])]);
   const y = four([px(s.radius[0][1]), px(s.radius[1][1]), px(s.radius[2][1]), px(s.radius[3][1])]);
   return [
@@ -53,7 +54,7 @@ function declarations(s: Spec): [string, string][] {
     ['height', px(s.height)],
     // width and height are the bounds
     ['box-sizing', 'border-box'],
-    ['padding', edges(s.padding)],
+    ['padding', shorthand(s.padding)],
     ...border,
     ['border-radius', x === y ? x : `${x} / ${y}`],
   ];
