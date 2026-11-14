@@ -136,13 +136,24 @@ describe('radiusLabels', () => {
   const b: Rect = { left: 0, top: 0, right: 200, bottom: 100 };
   const texts = (c: Corners) => radiusLabels(b, c).map((l) => l.text);
 
-  it('four equal corners: one label near the top-left corner, inside the box only', () => {
+  it('four equal corners: one label, inside the top-left corner first, then the other corners, then outside', () => {
     const [l] = radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]]);
     expect(l?.text).toBe('r 12');
-    const [inside, ...rest] = l?.at ?? [];
-    expect(inside && inside.x > 0 && inside.x < 100 && inside.y > 0 && inside.y < 50).toBe(true);
-    expect(rest).toEqual([]);
+    const at = l?.at ?? [];
+    const quadrant = ({ x, y }: { x: number; y: number }) => `${x < 100 ? 'l' : 'r'}${y < 50 ? 't' : 'b'}`;
+    const inBox = ({ x, y }: { x: number; y: number }) => x > 0 && x < 200 && y > 0 && y < 100;
+    expect(at.map(quadrant)).toEqual(['lt', 'rt', 'rb', 'lb', 'lt', 'rt', 'rb', 'lb']);
+    expect(at.map(inBox)).toEqual([true, true, true, true, false, false, false, false]);
     expect(radiusLabels(b, [[12, 12], [12, 12], [12, 12], [12, 12]])).toHaveLength(1);
+  });
+
+  it('a corner of its own: inside it, then just below it, in line', () => {
+    const [, , l] = radiusLabels(b, [[8, 8], [8, 8], [20, 20], [8, 8]]);
+    expect(l?.text).toBe('r 20');
+    expect(l?.at).toHaveLength(2);
+    const [inside, outside] = l?.at ?? [];
+    expect(inside && inside.x < 200 && inside.y < 100 && inside.x > 100 && inside.y > 50).toBe(true);
+    expect(outside && outside.x === inside?.x && outside.y > 100).toBe(true);
   });
 
   it('different corners: one label each, ellipses as x/y, corners under 1px dropped', () => {

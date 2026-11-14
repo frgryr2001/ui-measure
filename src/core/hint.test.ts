@@ -54,6 +54,6 @@ describe('placeHint', () => {
   });
 
   it('a viewport smaller than the pill keeps its top-left corner on screen', () => {
-    expect(placeHint({ x: 50, y: 10 }, W, HINT_H, { left: 0, top: 0, right: 100, bottom: 20 })).toMatchObject({ left: 2, top: 2 });
+    expect(placeHint({ x: 50, y: 10 }, W, HINT_H, { left: 0, top: 0, right: 100, bottom: 20 })).toMatchObject({ left: 4, top: 4 });
   });
 });

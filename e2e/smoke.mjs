@@ -159,13 +159,14 @@ try {
       const kids = [...h.children].map((c) => c.getBoundingClientRect());
       return { text: [...h.children].map((c) => c.textContent).join(' '), box: [r.x, r.y, r.width, r.height], vw: innerWidth, vh: innerHeight, used: kids.at(-1).right - kids[0].left };
     })()`);
-  // label collision: every pair of visible label boxes (the only rects with rx) and the hint must be disjoint
+  // label collision: every pair of visible label boxes (the only rects with rx) and the hint must be 4px apart (labels.ts APART)
   const assertLabelsApart = async (what) => {
     const boxes = await evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('rect[rx]')]
       .map((r) => ['x', 'y', 'width', 'height'].map((a) => +r.getAttribute(a)))`);
     const hint = await hintOf();
     if (hint) boxes.push(hint.box);
-    const pairs = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]).map((b) => [a, b]));
+    const g = 3.9; // 4px, less float error
+    const pairs = boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) => a[0] < b[0] + b[2] + g && b[0] < a[0] + a[2] + g && a[1] < b[1] + b[3] + g && b[1] < a[1] + a[3] + g).map((b) => [a, b]));
     assert.deepEqual(pairs, [], `labels overlap: ${what}`);
     return boxes.length;
   };
@@ -320,7 +321,9 @@ try {
   await assertLabelsApart('details of #bp-card');
   const radiusOf = (labels) => labels.filter((t) => t.startsWith('r '));
   await select(await center('#bp-pill'));
-  await poll('details of the pill: r 16', blueprint, (o) => o.labels.includes('r 16'));
+  // a 32px pill: its corner spot sits on a side padding value, which must not lose it
+  await poll('details of the pill: r 16 and both side paddings', blueprint, (o) => o.labels.includes('r 16') && o.labels.filter((t) => t === '16').length === 2);
+  await assertLabelsApart('details of the pill');
   await evaluate(page, `document.querySelector('.card .inner').scrollIntoView({ block: 'center' })`);
   await select(await corner('.card .inner', 2, 2));
   bp = await poll('details of a square box: padding 8, no radius', blueprint, (o) => o.hatch && o.labels.includes('8'));

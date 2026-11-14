@@ -19,7 +19,7 @@ export type Label = { id: string; text: string; priority: number; at: Point[]; p
 export type Anchors = Map<string, number>;
 
 // space kept between two labels and between a label and the viewport edge
-export const APART = 2;
+export const APART = 4;
 const CELL = 32;
 
 const hits = (a: Rect, b: Rect) =>

@@ -27,6 +27,9 @@ The union of the bounds of every selected element. Measurements are taken from i
 **Measurement**
 The set of distances shown between the selection bounds and the hover target while the user holds Alt. Temporary: it disappears when Alt is released. Each distance is a spacing, an inset or an offset.
 
+**Touching**
+Two edges closer than half a device pixel, the smallest step the screen can show. The distance between touching edges is not drawn or labelled, whether it would be a spacing, an inset, an offset, a gap or a padding. A W × H is always shown.
+
 **Spacing**
 The empty distance between two boxes that do not touch along an axis.
 _Avoid_: gap (reserved, see below)

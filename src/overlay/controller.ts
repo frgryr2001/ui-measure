@@ -16,10 +16,11 @@ export type PlacedLabel = { text: string; kind: LabelKind; box: Rect };
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
 const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, hoverSize: 2 };
 // Details sit below every other label (research Phần 05 §5): the selected element's gaps, radius and
-// padding, then Blueprint's child sizes by area, gaps, radius, padding. Radius outranks padding: its only
-// spot is inside the corner, where a side padding label often sits. A hovered node's size comes back as
+// padding, then Blueprint's child sizes by area, gaps, padding, radius. Padding outranks radius: a padding
+// value has one spot, in its band, while radius falls back to just outside its corner, or to another corner
+// when all four match (a pill's inside corner spot covers its side padding value). A hovered node's size comes back as
 // the hover size, its other labels get `hoverBoost`, which keeps them above other details and below that size.
-const DETAILS = { rootGap: 1, rootRadius: 0.97, rootPadding: 0.95, size: 0.5, sizeByArea: 0.3, gap: 0.4, radius: 0.35, padding: 0.3, hoverBoost: 1 };
+const DETAILS = { rootGap: 1, rootPadding: 0.97, rootRadius: 0.95, size: 0.5, sizeByArea: 0.3, gap: 0.4, padding: 0.35, radius: 0.3, hoverBoost: 1 };
 
 /** Everything the overlay draws for one animation frame. Plain numbers only. */
 export type Frame = {

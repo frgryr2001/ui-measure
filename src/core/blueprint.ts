@@ -37,9 +37,11 @@ export const rounded = ([x, y]: Corner) => x >= 1 && y >= 1;
 const radiusText = ([x, y]: Corner) => `r ${x === y ? formatPx(x) : `${formatPx(x)}/${formatPx(y)}`}`;
 
 /**
- * Radius values of box `b`: one label at the top-left when all four corners match, else one per
- * rounded corner, in CSS px under CSS `zoom`. One spot: on the corner's 45° line, 0.3 r + 6 px into the box
- * (research Phần 05 §4.3); outside the box it would land on the page's content next to it.
+ * Radius values of box `b`: one label when all four corners match, else one per rounded corner, in
+ * CSS px under CSS `zoom`. Spots: on the corner's 45° line 0.3 r + 6 px into the box (research Phần 05 §4.3),
+ * then just above / below the corner, outside. On a short box (a pill) every inside spot covers a side padding value,
+ * which outranks the radius; outside is the fallback because it lands on the page's content next to it.
+ * The shared label tries the top-left corner first, then the other three.
  */
 export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[] }[] {
   const [first] = corners;
@@ -47,13 +49,15 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
   // corner points and their inward direction, in Corners order
   const dirs = [[b.left, b.top, 1, 1], [b.right, b.top, -1, 1], [b.right, b.bottom, -1, -1], [b.left, b.bottom, 1, -1]] as const;
   return corners.flatMap((c, i) => {
-    const d = dirs[i];
-    if (!d || !rounded(c) || (equal && i > 0)) return [];
+    if (!rounded(c) || (equal && i > 0)) return [];
     const text = radiusText([c[0] / zoom, c[1] / zoom]);
-    const [cx, cy, sx, sy] = d;
-    const dx = sx * (0.3 * c[0] + 6 + labelWidth(text) / 2);
-    const dy = sy * (0.3 * c[1] + 6 + LABEL_H / 2);
-    return [{ text, at: [{ x: cx + dx, y: cy + dy }] }];
+    const w = labelWidth(text) / 2;
+    const ds = equal ? dirs : dirs.slice(i, i + 1);
+    const x = (cx: number, sx: number) => cx + sx * (0.3 * c[0] + 6 + w);
+    const inside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy + sy * (0.3 * c[1] + 6 + LABEL_H / 2) }));
+    // above / below the corner, not diagonally out: beside the box it would take the parent's side padding spot
+    const outside = ds.map(([cx, cy, sx, sy]) => ({ x: x(cx, sx), y: cy - sy * (6 + LABEL_H / 2) }));
+    return [{ text, at: [...inside, ...outside] }];
   });
 }
 

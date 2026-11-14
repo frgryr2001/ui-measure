@@ -26,11 +26,11 @@ describe('placeLabels', () => {
     expect(shown.map((l) => l.id)).toEqual(['a']);
   });
 
-  it('labels 2px apart both show; closer than that they collide', () => {
-    // a spans 71.9–128.1; b centered 58.2 further is 2px clear of it
-    const apart = placeLabels([label('a', 2, { x: 100, y: 100 }), label('b', 1, { x: 158.2, y: 100 })], VP, new Map());
+  it('labels 4px apart both show; closer than that they collide', () => {
+    // a spans 71.9–128.1; b centered 60.2 further is 4px clear of it
+    const apart = placeLabels([label('a', 2, { x: 100, y: 100 }), label('b', 1, { x: 160.2, y: 100 })], VP, new Map());
     expect(apart.shown).toHaveLength(2);
-    const close = placeLabels([label('a', 2, { x: 100, y: 100 }), label('b', 1, { x: 157, y: 100 })], VP, new Map());
+    const close = placeLabels([label('a', 2, { x: 100, y: 100 }), label('b', 1, { x: 159, y: 100 })], VP, new Map());
     expect(close.shown).toHaveLength(1);
   });
 
@@ -64,7 +64,7 @@ describe('placeLabels', () => {
     const below = placeLabels([label('a', 1, { x: 100, y: 595 }, { x: 100, y: 500 })], VP, new Map());
     expect(below.shown[0]?.box.top).toBe(491);
     const offscreen = placeLabels([label('a', 1, { x: -50, y: 700 })], VP, new Map());
-    expect(offscreen.shown[0]?.box).toMatchObject({ left: 2, top: 580, bottom: 598 });
+    expect(offscreen.shown[0]?.box).toMatchObject({ left: 4, top: 578, bottom: 596 });
   });
 });
 
