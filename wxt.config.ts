@@ -9,11 +9,12 @@ export default defineConfig({
     // none warns at install: activeTab + scripting inject on turn-on; cross-origin frames ask for their host from the icon's menu
     permissions: ['activeTab', 'scripting', 'contextMenus'],
     optional_host_permissions: ['<all_urls>'],
-    // no default_popup, otherwise action.onClicked never fires
-    action: { default_title: 'UI Measure: OFF (Alt+Shift+M)' },
+    // no default_popup, otherwise action.onClicked never fires; the worker adds the bound shortcut to the title
+    action: { default_title: 'UI Measure: OFF' },
     commands: {
       'toggle-measure': {
-        suggested_key: { default: 'Alt+Shift+M' },
+        // not Alt+Shift (Windows switches the input language on it); E is free with Ctrl/Cmd+Shift in Chrome and the OSes
+        suggested_key: { default: 'Ctrl+Shift+E', mac: 'Command+Shift+E' },
         description: 'Toggle measure mode',
       },
     },

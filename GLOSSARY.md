@@ -4,7 +4,7 @@
 The tool's ON state, scoped to one browser tab. Off by default; turning it on or off never affects other tabs.
 
 **Hint**
-The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, children (Blueprint), parent). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
+The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, children (Blueprint), parent), naming each key as the user's keyboard prints it (`⌥ Option` on a Mac, `Alt` elsewhere). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
 
 **Bounds**
 The outer edge of an element's visible box (its border edge, after transforms). Every measurement is taken between bounds, never between padding or content edges.
@@ -25,7 +25,7 @@ The numbers of the one selected element, shown on select with no key: W × H, pa
 The union of the bounds of every selected element. Measurements are taken from it, so a multi-selection measures like one box. Drawn dashed with its own W × H when more than one element is selected.
 
 **Measurement**
-The set of distances shown between the selection bounds and the hover target while the user holds Alt. Temporary: it disappears when Alt is released. Each distance is a spacing, an inset or an offset.
+The set of distances shown between the selection bounds and the hover target while the user holds Alt (Option on a Mac, the same key). Temporary: it disappears when Alt is released. Each distance is a spacing, an inset or an offset.
 
 **Touching**
 Two edges at most half a device pixel apart, the smallest step the screen can show: `0.5 / devicePixelRatio` CSS px, counted in the element's CSS px inside CSS `zoom` (see CSS px). The distance between touching edges is not drawn or labelled, whether it would be a spacing, an inset, an offset, a gap or a padding, with no "≈0" cue. It depends on the display: a 0.3px spacing touches at DPR 1 and shows at DPR 2. A W × H is always shown (under 0.01 as "<0.01").

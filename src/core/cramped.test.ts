@@ -11,7 +11,8 @@ const box = (left: number, top: number, w: number, h: number): Rect => ({ left, 
 /** Gap between two boxes. Negative when they overlap; exactly the test placeLabels uses (gap < APART collides). */
 const gap = (a: Rect, b: Rect) => Math.max(a.left - b.right, b.left - a.right, a.top - b.bottom, b.top - a.bottom);
 
-const hintBox = (x: number, y: number) => placeHint({ x, y }, hintWidth(hintParts({ kind: 'selection', climbs: false })), HINT_H, VP);
+// the Mac pill (`⌥ Option`) is the wider one
+const hintBox = (x: number, y: number) => placeHint({ x, y }, hintWidth(hintParts({ kind: 'selection', climbs: false }, true)), HINT_H, VP);
 
 type Piece = { id: string; text: string; priority: number; rect: Rect; pad?: number; radius?: number };
 

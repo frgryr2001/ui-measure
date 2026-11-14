@@ -15,13 +15,17 @@ const key = (label: string): HintPart => ({ kind: 'key', text: label });
 const text = (label: string): HintPart => ({ kind: 'text', text: label });
 const DOT = text('·');
 
-export function hintParts(state: HintState): HintPart[] {
+/** The measuring chip: the held key as a `mac` keyboard prints it, or Alt. */
+export const measuringChip = (mac: boolean) => (mac ? '⌥ measuring' : 'Alt measuring');
+
+/** `mac`: name the measure key Option, the way a Mac keyboard prints it (the same key as Alt). */
+export function hintParts(state: HintState, mac: boolean): HintPart[] {
   switch (state.kind) {
     case 'idle':
       return [key('Click'), text('to select')];
     case 'selection':
       return [
-        key('⌥ Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'),
+        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'),
         ...(state.climbs ? [DOT, key('Click'), text('again → parent')] : []),
       ];
     case 'blueprint':

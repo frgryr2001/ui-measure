@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HINT_H, hintParts, hintWidth, placeHint, type HintPart } from './hint';
+import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintPart } from './hint';
 import type { Rect } from './rect';
 
 const VP: Rect = { left: 0, top: 0, right: 800, bottom: 600 };
@@ -9,23 +9,34 @@ const read = (parts: HintPart[]) => parts.map((p) => (p.kind === 'key' ? `[${p.t
 
 describe('hintParts', () => {
   it('nothing selected: click to select', () => {
-    expect(read(hintParts({ kind: 'idle' }))).toBe('[Click] to select');
+    expect(read(hintParts({ kind: 'idle' }, false))).toBe('[Click] to select');
   });
 
   it('a selection: measure, copy, children; parent only where a click would climb', () => {
-    expect(read(hintParts({ kind: 'selection', climbs: false }))).toBe('[⌥ Alt] measure · [C] copy · [B] children');
-    expect(read(hintParts({ kind: 'selection', climbs: true }))).toBe('[⌥ Alt] measure · [C] copy · [B] children · [Click] again → parent');
+    expect(read(hintParts({ kind: 'selection', climbs: false }, false))).toBe('[Alt] measure · [C] copy · [B] children');
+    expect(read(hintParts({ kind: 'selection', climbs: true }, false))).toBe('[Alt] measure · [C] copy · [B] children · [Click] again → parent');
+  });
+
+  it('on a Mac the measure key reads the way its keyboard prints it', () => {
+    expect(read(hintParts({ kind: 'selection', climbs: false }, true))).toBe('[⌥ Option] measure · [C] copy · [B] children');
   });
 
   it('Blueprint: B or Esc to exit', () => {
-    expect(read(hintParts({ kind: 'blueprint' }))).toBe('[B] / [Esc] to exit');
+    expect(read(hintParts({ kind: 'blueprint' }, false))).toBe('[B] / [Esc] to exit');
+  });
+});
+
+describe('measuringChip', () => {
+  it('names the held key: ⌥ on a Mac, Alt elsewhere', () => {
+    expect(measuringChip(true)).toBe('⌥ measuring');
+    expect(measuringChip(false)).toBe('Alt measuring');
   });
 });
 
 describe('hintWidth', () => {
   it('keycaps get side padding, text none, parts a gap, the pill its padding', () => {
     // 8 + (5 * 6.6 + 10) + 5 + 9 * 6.6 + 8
-    expect(hintWidth(hintParts({ kind: 'idle' }))).toBeCloseTo(123.4);
+    expect(hintWidth(hintParts({ kind: 'idle' }, false))).toBeCloseTo(123.4);
   });
 });
 

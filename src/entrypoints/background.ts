@@ -2,16 +2,32 @@ import type { Browser } from 'wxt/browser';
 import { isMessage, isStatusReply, type Message } from '../messages';
 import { theme } from '../overlay/theme';
 
-const TITLE_OFF = 'UI Measure: OFF (Alt+Shift+M)';
-const TITLE_ON = 'UI Measure: ON (Alt+Shift+M or Esc to turn off)';
+const COMMAND = 'toggle-measure';
 const FRAMES_MENU = 'measure-cross-origin-frames';
 const CONTENT_SCRIPT = '/content-scripts/measure.js';
 
-function showState(tabId: number, state: 'on' | 'off' | 'blocked') {
-  const [text, title] =
-    state === 'on' ? ['ON', TITLE_ON] : state === 'off' ? ['', TITLE_OFF] : ['!', 'UI Measure cannot run on this page'];
-  void browser.action.setBadgeText({ tabId, text });
-  void browser.action.setTitle({ tabId, title });
+type TabState = 'on' | 'off' | 'blocked';
+
+/** Names the toggle's shortcut as bound now: the user may rebind or clear it at chrome://extensions/shortcuts (empty when cleared). */
+async function titleOf(state: TabState) {
+  const key = (await browser.commands.getAll()).find((c) => c.name === COMMAND)?.shortcut;
+  switch (state) {
+    case 'on':
+      return `UI Measure: ON (${key ? `${key} or ` : ''}Esc to turn off)`;
+    case 'off':
+      return key ? `UI Measure: OFF (${key})` : 'UI Measure: OFF';
+    case 'blocked':
+      return 'UI Measure cannot run on this page';
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+}
+
+function showState(tabId: number, state: TabState) {
+  void browser.action.setBadgeText({ tabId, text: state === 'on' ? 'ON' : state === 'off' ? '' : '!' });
+  void titleOf(state).then((title) => browser.action.setTitle({ tabId, title }));
 }
 
 /** Asks the top frame's content script; throws when none is injected. */
@@ -116,6 +132,8 @@ async function injectGranted(tabId: number, origins: string[]) {
 
 export default defineBackground(() => {
   void browser.action.setBadgeBackgroundColor({ color: theme.badge });
+  // the manifest's default title can't name the shortcut
+  void titleOf('off').then((title) => browser.action.setTitle({ title }));
 
   browser.runtime.onInstalled.addListener(() => {
     browser.contextMenus.create({ id: FRAMES_MENU, title: 'Measure cross-origin frames', contexts: ['action'] });
@@ -137,7 +155,7 @@ export default defineBackground(() => {
 
   browser.action.onClicked.addListener(toggle);
   browser.commands.onCommand.addListener((command, tab) => {
-    if (command === 'toggle-measure') toggle(tab);
+    if (command === COMMAND) toggle(tab);
   });
 
   // Esc in any frame turned that frame off: the rest of the tab follows

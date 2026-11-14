@@ -11,6 +11,9 @@ import { join, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 // prod build only: the dev manifest adds `tabs` + localhost host permissions, which would hide an activeTab bug
 const extDir = join(root, '.output/chrome-mv3');
+// keys are named as this platform's keyboard prints them (the Hint, the measuring chip)
+const MAC = process.platform === 'darwin';
+const CHIP = MAC ? '⌥ measuring' : 'Alt measuring';
 
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -48,6 +51,8 @@ assert.deepEqual(
   [['activeTab', 'scripting', 'contextMenus'], undefined, ['<all_urls>']],
 );
 assert.deepEqual(Object.keys(manifest.icons ?? {}), ['16', '32', '48', '128']);
+// not Alt+Shift: Windows switches the input language on it
+assert.deepEqual(manifest.commands['toggle-measure'].suggested_key, { default: 'Ctrl+Shift+E', mac: 'Command+Shift+E' });
 
 const pages = { '/frame.html': readFileSync(join(root, 'playground/frame.html')) };
 const html = readFileSync(join(root, 'playground/index.html'));
@@ -110,6 +115,10 @@ try {
     evaluate(page, `[...document.querySelectorAll('ui-measure-root')].map((h) => ({ open: h.matches(':popover-open'), svg: !!h.shadowRoot?.querySelector('svg') }))`);
   let tabId;
   const badge = () => evaluate(sw, `chrome.action.getBadgeText({ tabId: ${tabId} })`);
+  const title = () => evaluate(sw, `chrome.action.getTitle({ tabId: ${tabId} })`);
+  // the icon title names the shortcut as bound (empty when another extension holds it, or the user cleared it)
+  const shortcut = await evaluate(sw, `chrome.commands.getAll().then((cs) => cs.find((c) => c.name === 'toggle-measure')?.shortcut)`);
+  assert.ok(shortcut, 'the toggle shortcut is bound on a fresh profile');
 
   for (const on of [true, false, true]) {
     await send('Extensions.triggerAction', { id: extId, targetId: tab.targetId });
@@ -126,7 +135,8 @@ try {
     tabId ??= await evaluate(sw, `chrome.tabs.query({}).then((ts) => ts.find((t) => t.url === ${JSON.stringify(url)})?.id)`);
     assert.ok(tabId, 'tab not visible to the worker after the click');
     await poll(`badge ${on ? 'ON' : 'empty'}`, badge, (b) => b === (on ? 'ON' : ''));
-    console.log(`ok  click → ${on ? 'on ' : 'off'}  hosts=${JSON.stringify(state)}`);
+    await poll('icon title names the shortcut', title, (t) => t === (on ? `UI Measure: ON (${shortcut} or Esc to turn off)` : `UI Measure: OFF (${shortcut})`));
+    console.log(`ok  click → ${on ? 'on ' : 'off'}  hosts=${JSON.stringify(state)}  title shortcut ${shortcut}`);
   }
 
   // the measuring chip and red measurement lines
@@ -135,7 +145,7 @@ try {
       const svg = document.querySelector('ui-measure-root')?.shadowRoot?.querySelector('svg');
       return {
         svg: !!svg,
-        chip: [...(svg?.querySelectorAll('text') ?? [])].map((t) => t.textContent).find((t) => t.startsWith('⌥')) ?? null,
+        chip: [...(svg?.querySelectorAll('text') ?? [])].map((t) => t.textContent).find((t) => t === ${JSON.stringify(CHIP)}) ?? null,
         lines: svg?.querySelectorAll('[data-line="measurement"]').length ?? 0,
       };
     })()`);
@@ -172,7 +182,7 @@ try {
   };
   const a = await center('.row .tile:nth-child(1)');
   const b = await center('.row .tile:nth-child(2)');
-  const SELECTION_HINT = '⌥ Alt measure · C copy · B children';
+  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children`;
   await mouse('mouseMoved', a);
   await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
   const labelChrome = await evaluate(page, `(() => {
@@ -198,7 +208,7 @@ try {
   assert.ok(flipped.box[0] >= 0 && flipped.box[1] >= 0, `hint on screen: ${JSON.stringify(flipped)}`);
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
   await mouse('mouseMoved', b, 1); // 1 = Alt
-  await poll('Alt-hold chip', overlay, (o) => o.chip === '⌥ measuring' && o.lines > 0);
+  await poll('Alt-hold chip', overlay, (o) => o.chip === CHIP && o.lines > 0);
   assert.equal(await hintOf(), null, 'hint hidden while measuring');
   // the line glides onto tile 2; labels are checked once it has arrived
   const linePaths = () =>
@@ -213,7 +223,7 @@ try {
   await poll('Alt released', overlay, (o) => o.chip === null && o.lines === 0);
   await poll('hint back after Alt', hintOf, (h) => h?.text === SELECTION_HINT);
   console.log('ok  hint: click to select → measure / copy / children (+ parent on the selection), 16px off the pointer, flips at the corner, hidden while measuring');
-  console.log('ok  Alt hold still shows ⌥ measuring');
+  console.log(`ok  Alt hold still shows ${CHIP}`);
 
   // selection: outlines are compared to the page's own rects, rounded to 1px
   const SHIFT = 8;
@@ -357,7 +367,7 @@ try {
   await select(rowSpot);
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
   await mouse('mouseMoved', chainSpot, 1);
-  await poll('Alt-measure from the row to the chain: the grid gap 12', overlay, (o) => o.chip === '⌥ measuring' && o.lines === 1);
+  await poll('Alt-measure from the row to the chain: the grid gap 12', overlay, (o) => o.chip === CHIP && o.lines === 1);
   assert.ok((await labelTexts()).includes('12'), `measurement 12: ${JSON.stringify(await labelTexts())}`);
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
   await press('Escape', 'Escape', 27);
@@ -365,11 +375,12 @@ try {
 
   // block gaps: a block container's stacked children get gaps like a flex column; a paragraph's inline elements none
   await evaluate(page, `document.querySelector('#bp-text').scrollIntoView({ block: 'center' })`);
-  const clickThenAway = async (p) => {
+  const clickThenAway = async (p, dy = 0) => {
     await select(p);
-    await mouse('mouseMoved', { x: p.x + 520, y: p.y }); // out of the Hint's way
+    await mouse('mouseMoved', { x: p.x + 520, y: p.y + dy }); // out of the Hint's way
   };
-  await clickThenAway(await corner('#bp-text', 4, 4));
+  // in a 756px viewport the Hint flips left onto the article: keep it above
+  await clickThenAway(await corner('#bp-text', 4, 4), -100);
   await poll('block gaps of the article: h3 → p 8, p → ul 12', gapLabels, (g) => JSON.stringify(g) === '["8","12"]');
   await assertLabelsApart('block gaps of #bp-text');
   await clickThenAway(await corner('#bp-text-p', 6, 8));
@@ -743,7 +754,7 @@ try {
   // small distances at DPR 1: half a device pixel or less is touching, so 0.25 is not drawn; a 1px spacing's label sits beside its line
   await poll('DPR 1 after browser zoom', () => evaluate(page, 'devicePixelRatio'), (r) => r === 1);
   await evaluate(page, `document.querySelector('#tiny').scrollIntoView({ block: 'center' })`);
-  const redNumbers = async () => (await redLabels()).filter((t) => !t.startsWith('⌥'));
+  const redNumbers = async () => (await redLabels()).filter((t) => t !== CHIP);
   const measureTiny = async (id) => {
     const [ta, tb] = [`#${id} > .tile:nth-child(1)`, `#${id} > .tile:nth-child(2)`];
     await select(await center(ta));
@@ -751,7 +762,7 @@ try {
     await mouse('mouseMoved', await center(tb), 1);
     // positive proof first: measuring, with the hover target on the second tile
     const [tbRect] = await rectsOf([tb]);
-    await poll(`${id}: measuring onto the second tile`, async () => ({ o: await overlay(), h: await hoverOutlines() }), ({ o, h }) => o.chip === '⌥ measuring' && h.includes(tbRect));
+    await poll(`${id}: measuring onto the second tile`, async () => ({ o: await overlay(), h: await hoverOutlines() }), ({ o, h }) => o.chip === CHIP && h.includes(tbRect));
   };
   const altUp = () => send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
   await measureTiny('tiny-1');

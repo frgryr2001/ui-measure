@@ -1,13 +1,18 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
 import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import type { Gap } from '../core/gap';
-import { HINT_H, hintParts, hintWidth, placeHint, type HintState, type PlacedHint } from '../core/hint';
+import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
 import { followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
 import { copyText } from './clipboard';
+
+declare global {
+  // User-Agent Client Hints: Chromium only, not in lib.dom yet
+  interface Navigator { userAgentData?: { platform: string } }
+}
 
 /** Picks the label's fill: that role's `label` in theme.ts. */
 export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius';
@@ -79,6 +84,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
 }): { stop: () => void; notify: (text: string) => void } {
   let pointer: { x: number; y: number } | null = null;
   let alt = false;
+  const mac = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform);
   // `B`: annotates the last-selected element's subtree until B or Esc; follows the selection
   let blueprint = false;
   // in click order: the last one is what Copy and Blueprint describe
@@ -251,7 +257,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       add('toast', toast.text, toast.ok ? 'size' : 'measurement', PRIORITY.toast, () => [{ x: window.innerWidth / 2, y: window.innerHeight - 20 }, { x: window.innerWidth / 2, y: 20 }]);
     }
     if (measuring) {
-      add('chip', '⌥ measuring', 'measurement', PRIORITY.chip, () => [{ x: window.innerWidth - 60, y: window.innerHeight - 20 }]);
+      add('chip', measuringChip(mac), 'measurement', PRIORITY.chip, () => [{ x: window.innerWidth - 60, y: window.innerHeight - 20 }]);
     }
     if (measurement && target) {
       const key = `m:${selected.map(idOf).join()}>${idOf(target)}`;
@@ -313,7 +319,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     }
     const one = climbsFrom(target);
     const hintState: HintState = blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
-    const parts = hintParts(hintState);
+    const parts = hintParts(hintState, mac);
     const hint = pointer && !measuring ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
     // a one-line control's words: labels may sit in its padding, never on the text
     const words = (border: Rect, content: Rect): Rect[] => (height(border) < TEXT_SAFE && width(content) > 0 && height(content) > 0 ? [content] : []);
