@@ -197,4 +197,33 @@ describe('cramped label placement', () => {
     expect(shown.some((l) => l.text === text)).toBe(true);
     expect(shown.some((l) => l.id.startsWith('r:late'))).toBe(true);
   });
+  it('the #leader-row: a 60px row keeps both side paddings in their bands, beside its words, and its radius', () => {
+    // 440 × 60 border box, padding 0 24, radius 12: the bands are 24px, a `24` label 23.2px, the words its content box
+    const row = box(24, 300, 440, 60);
+    const words = { ...row, left: row.left + 24, right: row.right - 24 };
+    const bands = { left: { ...row, right: words.left }, right: { ...row, left: words.right } };
+    const pads: Label[] = (['left', 'right'] as const).map((side) => ({
+      id: `pad:${side}`,
+      text: '24',
+      priority: 0.97,
+      pinned: true,
+      at: [{ x: (bands[side].left + bands[side].right) / 2, y: 330 }],
+      away: paddingAway(bands[side], row, side, '24'),
+    }));
+    const { shown } = placeLabels([...labelsOf([{ id: 'row', text: '440 × 60', priority: 3, rect: row, radius: 12 }], 'row'), ...pads], VP, new Map(), [], [words]);
+    for (const side of ['left', 'right'] as const) {
+      const pad = shown.find((l) => l.id === `pad:${side}`);
+      expect(pad && !pad.leader && gap(pad.box, bands[side]) < 0, `the ${side} 24 sits in its band`).toBe(true);
+      expect(gap(pad!.box, words), `the ${side} 24 off the words`).toBeGreaterThanOrEqual(0);
+    }
+    expect(shown.some((l) => l.text === 'r 12')).toBe(true);
+  });
+  it('a value whose near spot is on words and under the Hint still moves onto a leader', () => {
+    // #bp-card in Blueprint: the r 20 inside-corner spot is on a child row's words, and the Hint is over it too
+    const words = box(400, 300, 200, 40);
+    const hint = box(380, 290, 240, 26);
+    const r20: Label = { id: 'r', text: 'r 20', priority: 0.95, pinned: true, at: [{ x: 420, y: 310 }], away: [{ at: { x: 420, y: 270 }, from: { x: 410, y: 290 } }] };
+    const { shown } = placeLabels([r20], VP, new Map(), [hint], [words]);
+    expect(shown.map((l) => `${l.id}${l.leader ? ' led' : ''}`)).toEqual(['r led']);
+  });
 });

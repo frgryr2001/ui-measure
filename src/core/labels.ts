@@ -103,8 +103,12 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
   const next: Anchors = new Map();
   const later: L[] = [];
   const sorted = [...labels].sort((a, b) => b.priority - a.priority);
-  // same gap a label keeps from another label: 4px, so a value does not sit on the descenders
-  const onWords = (r: Rect) => clear.some((c) => hits(r, c));
+  // overlap, not the 4px labels keep apart: the content box already holds the descenders, and a side padding
+  // band is often only a label wide (a 24px band, a 23.2px `24`), so 4px would push its value out of the band
+  // in the same grid cells as labels: Blueprint of 400 short boxes has 400 of them
+  const words = new Map<number, Rect[]>();
+  for (const c of clear) for (const k of cells(c)) words.set(k, [...(words.get(k) ?? []), c]);
+  const onWords = (r: Rect) => cells(r).some((k) => words.get(k)?.some((c) => r.left < c.right && c.left < r.right && r.top < c.bottom && c.top < r.bottom));
   const boxer = (l: L) => {
     const w = labelWidth(l.text);
     const hi = { x: viewport.right - APART - w, y: viewport.bottom - APART - LABEL_H };
@@ -129,7 +133,8 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
       occupy({ r });
       next.set(l.id, i);
       shown.push({ ...l, box: r });
-    } else if (l.away?.length && !(taken.length > 0 && spots.some((s) => inside(s) && blocked(s) === 'hint'))) later.push(l);
+      // a spot on words is lost with or without the Hint, so the Hint isn't what keeps the value from it
+    } else if (l.away?.length && !(taken.length > 0 && spots.some((s) => inside(s) && !onWords(s) && blocked(s) === 'hint'))) later.push(l);
   }
   // no anchor for an away spot: next frame the label goes back next to its target if that spot is free
   for (const l of later) {

@@ -418,7 +418,7 @@ try {
   const assertLeaders = async (what) => {
     const ls = await leaders();
     for (const l of ls) {
-      assert.ok(['padding', 'gap', 'radius'].includes(l.kind), `${what}: a leader ends on a details value: ${JSON.stringify(l)}`);
+      assert.ok(['padding', 'gap', 'radius', 'size'].includes(l.kind), `${what}: a leader ends on a details value or a size: ${JSON.stringify(l)}`);
       assert.ok(l.length <= 40.01, `${what}: leader at most 40px: ${JSON.stringify(l)}`);
       assert.deepEqual(l.crossed, [], `${what}: a leader crosses no label: ${JSON.stringify(l)}`);
     }
@@ -507,6 +507,8 @@ try {
   console.log('ok  details on select: #bp-card r 20, padding 20 24, gaps 12 12; pill r 16; square box no radius; none on hover or multi-select');
   await select(cardPadding);
   await pressB();
+  // out of the Hint's way: under it the card's top-right r 20 hides until the pointer moves (its top-left spot holds the avatar's size)
+  await mouse('mouseMoved', { x: cardPadding.x + 400, y: cardPadding.y - 60 });
   // row, avatar, merged tile (3 same-size boxes → 1), text, pill; the display:none child is skipped
   bp = await poll('blueprint of #bp-card', blueprint, (o) => o.boxes === 5 && o.hatch);
   await poll('hint in Blueprint', hintOf, (h) => h?.text === 'B / Esc to exit · I styles');
@@ -514,12 +516,10 @@ try {
   assert.equal(bp.labels.filter((t) => t === 'r 20').length, 1, `B adds descendants, the root's labels once: ${JSON.stringify(bp.labels)}`);
   await assertLabelsApart('blueprint of #bp-card');
   console.log(`ok  B → blueprint of #bp-card: 5 boxes, ${bp.labels.length} labels apart`);
-  for (const [selector, want] of [['#bp-pill', 'r 16'], ['#bp-avatar', 'r 24/20']]) {
-    await mouse('mouseMoved', await center(selector));
-    bp = await poll(`${want} on hover of ${selector}`, blueprint, (o) => o.labels.includes(want));
-    await assertLabelsApart(`blueprint, hovering ${selector}`);
-  }
-  console.log('ok  pill 9999px → r 16, avatar 50% → r 24/20');
+  await mouse('mouseMoved', await center('#bp-pill'));
+  bp = await poll('r 16 on hover of #bp-pill', blueprint, (o) => o.labels.includes('r 16'));
+  await assertLabelsApart('blueprint, hovering #bp-pill');
+  console.log('ok  pill 9999px → r 16');
 
   await evaluate(page, `document.querySelector('input').focus({ preventScroll: true })`);
   await pressB();
@@ -539,6 +539,12 @@ try {
   await pressB();
   await poll('B toggles off', blueprint, (o) => o.boxes === null);
   console.log('ok  B ignored while typing / composing; Esc and B return to the selection');
+  // the avatar on its own: in the card's Blueprint its 40px height leaves no corner spot, and every leader spot is taken
+  // (its size above it, the paragraph's words below, the card's padding values beside)
+  await select(await center('#bp-avatar'));
+  await poll('avatar 50% → r 24/20', blueprint, (o) => o.labels.includes('r 24/20'));
+  await assertLabelsApart('the avatar selected');
+  console.log('ok  avatar 50% → r 24/20');
 
   // Styles: I opens the last-selected element's computed CSS beside it; Esc closes it before Blueprint
   const pressI = () => press('i', 'KeyI', 73, 'i');

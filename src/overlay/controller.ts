@@ -304,8 +304,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       const z = zoomOf([node]);
       const drawn = drawnBoxes(node, boxes);
       const boost = boostOf(node);
+      // no leader: led-away child sizes would take every spot the details values need; hovering the box brings its size back, on a leader
       if (node !== root && node !== target) {
-        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t), (t) => sizeAway(boxes.border, t), false);
+        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t));
       }
       // the number is the real padding; the spot rides the band that is on screen
       const p = drawn.padding;
@@ -341,11 +342,15 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     // a one-line control's words: labels may sit in its padding, never on the text
     const words = (border: Rect, content: Rect): Rect[] => (height(border) < TEXT_SAFE && width(content) > 0 && height(content) > 0 ? [content] : []);
     const clear = [
-      ...kept.flatMap((k) => {
+      // a container with gaps holds boxes laid out apart, not a line of words: its gap values sit between them
+      ...kept.flatMap((k, i) => {
+        if (gapsOf[i]?.gaps.length) return [];
         const b = drawnBoxes(k.node, k.boxes);
         return words(b.border, b.content);
       }),
-      ...(shownHover ? words(shownHover.border, shownHover.content) : []),
+      // while measuring the hover has no size label, and a spacing value may sit beside its line on the target.
+      // a kept box (the selection, a Blueprint node) has its words from the line above
+      ...(shownHover && !measuring && !kept.some((k) => k.node === target) ? words(shownHover.border, shownHover.content) : []),
     ];
     const stylesOf = !measuring && styles ? selected.at(-1) : undefined;
     const groups = stylesOf ? styleRows(readStyles(stylesOf)) : [];
