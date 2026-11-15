@@ -7,7 +7,9 @@ export type HintState =
   /** `climbs`: a click at the pointer would select the parent (see the controller's click rule). */
   | { kind: 'selection'; climbs: boolean }
   | { kind: 'blueprint' }
-  /** Styles open: `I` or `Esc` closes it first, also in Blueprint. */
+  /** `below`: a click at the pointer would select the box under the selection (see the controller's click rule). */
+  | { kind: 'stacking'; below: boolean }
+  /** Styles open: `I` or `Esc` closes it first, also in Blueprint and Stacking. */
   | { kind: 'styles' };
 
 export type HintPart = { kind: 'key' | 'text'; text: string };
@@ -27,11 +29,13 @@ export function hintParts(state: HintState, mac: boolean): HintPart[] {
       return [key('Click'), text('to select')];
     case 'selection':
       return [
-        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'), DOT, key('I'), text('styles'),
+        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'), DOT, key('I'), text('styles'), DOT, key('S'), text('stacking'),
         ...(state.climbs ? [DOT, key('Click'), text('again → parent')] : []),
       ];
     case 'blueprint':
       return [key('B'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles')];
+    case 'stacking':
+      return [key('S'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles'), ...(state.below ? [DOT, key('Click'), text('again → below')] : [])];
     case 'styles':
       return [key('I'), text('/'), key('Esc'), text('to close')];
     default: {

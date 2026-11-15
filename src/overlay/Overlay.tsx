@@ -14,13 +14,14 @@ const LABEL_COLOR: Record<LabelKind, string> = {
   gap: theme.gap.label,
   padding: theme.padding.label,
   radius: theme.radius.label,
+  stacking: theme.stacking.label,
 };
 
 // drawn exactly at the box placeLabels chose, so what is tested is what is seen.
 // rounded like the Hint; `data-*` names each part for e2e; the layer below carries one shadow for every label (one per label blows the blueprint frame budget)
 const Label = ({ l }: { l: PlacedLabel }) => (
   <g opacity={l.opacity}>
-    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={theme.label.corner} fill={LABEL_COLOR[l.kind]} data-label={l.kind} />
+    <rect x={l.box.left} y={l.box.top} width={width(l.box)} height={height(l.box)} rx={theme.label.corner} fill={LABEL_COLOR[l.kind]} data-label={l.kind} data-stacking={l.stacking} />
     <text
       x={mid(l.box.left, l.box.right)}
       y={mid(l.box.top, l.box.bottom)}
@@ -52,6 +53,21 @@ const Outline = ({ part, r, color, strokeWidth, dash }: OutlineProps) => (
     strokeDasharray={dash}
     shapeRendering="crispEdges"
     data-outline={part}
+  />
+);
+
+const StackingOutline = ({ part, r, dash }: { part: 'context' | 'clip'; r: Rect; dash?: string }) => (
+  <rect
+    x={r.left}
+    y={r.top}
+    width={width(r)}
+    height={height(r)}
+    fill="none"
+    stroke={theme.stacking.outline}
+    strokeWidth={theme.stacking.outlineWidth}
+    strokeDasharray={dash}
+    shapeRendering="crispEdges"
+    data-stacking={part}
   />
 );
 
@@ -177,7 +193,7 @@ const Styles = ({ styles: { box, groups } }: { styles: NonNullable<Frame['styles
 );
 
 export function Overlay({ frame }: { frame: Frame }) {
-  const { hover, hoverTouch, selected, selection, measuring, measurement, gaps, labels, details, hint, styles } = frame;
+  const { hover, hoverTouch, selected, selection, measuring, measurement, gaps, labels, details, hint, styles, stacking } = frame;
   return (
     <>
       <svg
@@ -224,6 +240,8 @@ export function Overlay({ frame }: { frame: Frame }) {
         {selection && selected.length > 1 && (
           <Outline part="selection" r={selection} color={theme.selection.bounds} strokeWidth={theme.selection.boundsWidth} dash={theme.selection.boundsDash} />
         )}
+        {stacking?.context && <StackingOutline part="context" r={stacking.context} />}
+        {stacking?.clip && <StackingOutline part="clip" r={stacking.clip} dash={theme.stacking.clipDash} />}
         {measurement?.connectors.map((c, i) => <ConnectorLine key={i} c={c} />)}
         {measurement?.segments.map((s, i) => (
           <SegmentLine key={i} part="measurement" s={s} color={theme.measurement.line} strokeWidth={theme.measurement.lineWidth} />

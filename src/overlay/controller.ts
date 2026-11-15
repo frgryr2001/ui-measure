@@ -1,11 +1,11 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStyles, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
+import { blueprintKids, bounds, boxAbove, boxAt, boxBelow, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStacking, readStyles, readZNoEffect, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
 import { beside, type Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
-import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
+import { LABEL_H, TEXT_SAFE, cornerSpots, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
 import { fadeOut, followMeasurement, followPoint, glider } from '../core/motion';
-import { formatPx, height, ring, sizeLabel, union, width, type Rect } from '../core/rect';
+import { formatPx, height, intersect, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
 import { placeStyles, styleRows, stylesSize, type StyleRow } from '../core/styles';
 import { copyText } from './clipboard';
@@ -16,12 +16,15 @@ declare global {
 }
 
 /** Picks the label's fill: that role's `label` in theme.ts. */
-export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius';
+export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius' | 'stacking';
+/** Which Stacking part a label belongs to: the selection's own, its stacking context's, the clipping ancestor's. */
+export type StackingPart = 'label' | 'context' | 'clip';
 /** `leader`: a details value placed away from what it describes (GLOSSARY "Leader"). `opacity`: under 1 only while the toast fades out. */
-export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader; opacity?: number };
+export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader; opacity?: number; stacking?: StackingPart };
 
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
-const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, hoverSize: 2 };
+// Stacking's labels come after the selection's W × H.
+const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, stacking: 2.5, stackingContext: 2.4, stackingClip: 2.3, hoverSize: 2 };
 // Details sit below every other label (research Phần 05 §5): the selected element's gaps, radius and
 // padding, then Blueprint's child sizes by area, gaps, padding, radius. Padding outranks radius: a padding
 // value has one near spot, in its band, while radius falls back to just outside its corner, or to another corner
@@ -57,6 +60,8 @@ export type Frame = {
   } | null;
   /** The Hint at the pointer; null while measuring or with the pointer outside this frame. */
   hint: PlacedHint | null;
+  /** `S`: the last-selected element's stacking context and the ancestor that clips it, each cut to the viewport (null for none); null when off or measuring. */
+  stacking: { context: Rect | null; clip: Rect | null } | null;
   /** `I`: the last-selected element's Styles, in groups, next to the selection (below, above, beside, else a corner); null when closed or measuring. */
   styles: { box: Rect; groups: StyleRow[][] } | null;
 };
@@ -96,8 +101,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   };
   let alt = false;
   const mac = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform);
-  // `B`: annotates the last-selected element's subtree until B or Esc; follows the selection
-  let blueprint = false;
+  // `B`: Blueprint annotates the last-selected element's subtree, `S`: Stacking, until that key again or Esc; they follow the
+  // selection and end with it. One at a time, so `B` in Stacking switches to Blueprint and back.
+  let view: 'details' | 'blueprint' | 'stacking' = 'details';
   // `I`: the Styles panel of the last-selected element, until I or Esc; closes with the selection
   let styles = false;
   // in click order: the last one is what Copy and Blueprint describe
@@ -155,9 +161,13 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
           lastHit = null;
           if (el) selected = selected.includes(el) ? selected.filter((s) => s !== el) : [...selected, el];
         } else {
+          // in Stacking a click on the one selected element goes down the stack at that point, elsewhere picks the topmost box
+          const single = view === 'stacking' && selected.length === 1 ? selected[0] : undefined;
+          const below = single && boxBelow(single, e.clientX, e.clientY, host, shadowOf);
           const one = climbsFrom(el);
-          selected = one ? [boxAbove(one, host, shadowOf)] : el ? [el] : [];
-          lastHit = el;
+          selected = below ? [below] : one && !single ? [boxAbove(one, host, shadowOf)] : el ? [el] : [];
+          // the stack decides in Stacking: a hit kept from it would climb on the first click after leaving
+          lastHit = single ? null : el;
         }
       }
     }, capture);
@@ -172,11 +182,12 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       return;
     }
     // `code`, not `key`: a Cyrillic layout reports `и` for this key
-    if (e.code === 'KeyB' && selected.length > 0 && isBareKeydown(e)) {
+    const toggles = e.code === 'KeyB' ? 'blueprint' : e.code === 'KeyS' ? 'stacking' : null;
+    if (toggles && selected.length > 0 && isBareKeydown(e)) {
       if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      blueprint = !blueprint;
+      view = view === toggles ? 'details' : toggles;
       wake();
       return;
     }
@@ -205,9 +216,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       e.preventDefault();
       e.stopImmediatePropagation();
       wake();
-      // while measuring Styles and the blueprint are hidden, so Esc skips them
+      // while measuring Styles, Stacking and the blueprint are hidden, so Esc skips them
       if (styles && !alt) styles = false;
-      else if (blueprint && !alt) blueprint = false;
+      else if (view !== 'details' && !alt) view = 'details';
       else if (selected.length > 0) {
         selected = [];
         lastHit = null;
@@ -229,7 +240,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     lastFrame = now;
     selected = selected.filter((el) => el.isConnected);
     if (selected.length === 0) {
-      blueprint = false;
+      view = 'details';
       styles = false;
     }
     const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
@@ -259,10 +270,10 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const measurement = measuring && hover && selRect && shownSel && shownHover && target && !selected.includes(target)
       ? followMeasurement(selRect, shownSel, hover.border, shownHover.border, touchLimit(dpr, measureZoom))
       : null;
-    // details: one selected element, or with `B` the last-selected one and its descendants
-    const root = measuring ? undefined : blueprint ? selected.at(-1) : selected.length === 1 ? selected[0] : undefined;
+    // details: one selected element, or with `B` the last-selected one and its descendants; Stacking keeps only the W × H
+    const root = measuring || view === 'stacking' ? undefined : view === 'blueprint' ? selected.at(-1) : selected.length === 1 ? selected[0] : undefined;
     // re-collected every frame like everything else, so scrolling reveals what the viewport cut
-    const bp = root && blueprint ? collect(root, (el) => blueprintKids(el, host, shadowOf), lookAt, viewport) : null;
+    const bp = root && view === 'blueprint' ? collect(root, (el) => blueprintKids(el, host, shadowOf), lookAt, viewport) : null;
     // the root from the element itself: collect drops one under 8px or out of view
     // `round`: the element whose radius the node shows, a same-size wrapper merged into it (`keptInChain`)
     const kept = (root ? [{ node: root, round: roundOf(root, host, shadowOf) }, ...(bp?.nodes ?? []).filter((k) => k.node !== root)] : []).map(({ node, round }) => ({ node, round, boxes: readBoxes(node), touch: touchLimit(dpr, zoomOf([node])) }));
@@ -277,7 +288,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const gapsOf = kept.map((k) => ({ el: k.node, gaps: readGaps(k.node, host, shadowOf, k.touch).map((g) => drawnGap(k.node, g)) }));
     const corners = kept.map((k) => ({ el: k.node, box: drawnBoxes(k.node, k.boxes).border, radii: readRadii(k.round, k.boxes.border) }));
 
-    const labels: (Label & { kind: LabelKind })[] = [];
+    const labels: (Label & { kind: LabelKind; stacking?: StackingPart })[] = [];
     // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden
     const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away'], pinned = !!away, late = false) =>
       labels.push({ id, text, kind, priority, at: at(text), ...(pinned ? { pinned: true } : {}), away: away?.(text), ...(late ? { late: true } : {}) });
@@ -304,6 +315,19 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (hover && target && !measuring && !(selected.length === 1 && selected[0] === target)) {
       add(`size:${idOf(target)}`, sizeLabel(hover.border, zoomOf([target])), 'size', PRIORITY.hoverSize, (t) => sizeSpots((shownHover ?? hover).border, t), (t) => sizeAway((shownHover ?? hover).border, t), false);
     }
+    const stackOf = !measuring && view === 'stacking' ? selected.at(-1) : undefined;
+    const stack = stackOf ? readStacking(stackOf, host, shadowOf) : null;
+    // an ancestor is cut to the viewport, its label inside the part on screen
+    const stackContext = stack?.context ? intersect(stack.context.box, viewport) : null;
+    const stackClip = stack?.clip ? intersect(stack.clip.box, viewport) : null;
+    const stackLabel = (part: StackingPart, text: string, priority: number, at: Label['at'], away?: Label['away']) =>
+      labels.push({ id: `stack:${part}:${stackOf ? idOf(stackOf) : ''}`, text, kind: 'stacking', priority, at, away, stacking: part });
+    if (stack?.label && stackOf) {
+      const r = shownSingle && stackOf === single ? shownSingle.border : bounds(stackOf);
+      stackLabel('label', stack.label, PRIORITY.stacking, sizeSpots(r, stack.label), sizeAway(r, stack.label));
+    }
+    if (stack?.context && stackContext) stackLabel('context', stack.context.label, PRIORITY.stackingContext, cornerSpots(stackContext, stack.context.label));
+    if (stack?.clip && stackClip) stackLabel('clip', stack.clip.label, PRIORITY.stackingClip, cornerSpots(stackClip, stack.clip.label));
     if (bp && root) {
       const r = shownSingle && root === single ? shownSingle.border : bounds(root);
       if (bp.hidden > 0) {
@@ -362,10 +386,24 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away, true, lateOf(el, boost)));
     }
     const one = climbsFrom(target);
+    const hintShown = !!pointer && !measuring && now - woke < HINT_REST_MS;
+    // a click below needs the stack at the pointer: only read while the Hint shows
+    const goesBelow = () => {
+      const below = hintShown && pointer && single && boxBelow(single, pointer.x, pointer.y, host, shadowOf);
+      return !!below && below !== single;
+    };
     // Esc closes Styles first, so the Hint names that
-    const hintState: HintState = styles ? { kind: 'styles' } : blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
+    const hintState: HintState = styles
+      ? { kind: 'styles' }
+      : view === 'stacking'
+        ? { kind: 'stacking', below: goesBelow() }
+        : view === 'blueprint'
+          ? { kind: 'blueprint' }
+          : selected.length > 0
+            ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one }
+            : { kind: 'idle' };
     const parts = hintParts(hintState, mac);
-    const hint = pointer && !measuring && now - woke < HINT_REST_MS ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
+    const hint = pointer && hintShown ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
     // a one-line control's words: labels may sit in its padding, never on the text
     const words = (border: Rect, content: Rect): Rect[] => (height(border) < TEXT_SAFE && width(content) > 0 && height(content) > 0 ? [content] : []);
     const clear = [
@@ -380,7 +418,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       ...(shownHover && !measuring && !kept.some((k) => k.node === target) ? words(shownHover.border, shownHover.content) : []),
     ];
     const stylesOf = !measuring && styles ? selected.at(-1) : undefined;
-    const groups = stylesOf ? styleRows(readStyles(stylesOf)) : [];
+    const groups = stylesOf ? styleRows(readStyles(stylesOf), readZNoEffect(stylesOf, shadowOf)) : [];
     const size = stylesSize(groups);
     // anchored to the drawn selection, so it glides with it
     const panel = stylesOf && shownSel ? { box: placeStyles(shownSel, size.w, size.h, viewport), groups } : null;
@@ -398,7 +436,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       measuring,
       measurement,
       gaps: gapsOf.flatMap((o) => o.gaps),
-      labels: placed.shown.map(({ id, text, kind, box, leader }) => ({ text, kind, box, ...(leader && { leader }), ...(id === 'toast' && toastOpacity < 1 && { opacity: toastOpacity }) })),
+      labels: placed.shown.map(({ id, text, kind, box, leader, stacking: part }) => ({ text, kind, box, ...(leader && { leader }), ...(id === 'toast' && toastOpacity < 1 && { opacity: toastOpacity }), ...(part && { stacking: part }) })),
       details: root ? {
         outlines: kept.filter((k) => k.node !== root).map((k) => k.boxes.border),
         padding: kept.flatMap((k) => {
@@ -409,6 +447,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       } : null,
       hint,
       styles: panel,
+      stacking: stack ? { context: stackContext, clip: stackClip } : null,
     };
     const key = JSON.stringify(frame);
     if (key !== last) {

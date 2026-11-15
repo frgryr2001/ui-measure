@@ -194,7 +194,7 @@ try {
   };
   const a = await center('.row .tile:nth-child(1)');
   const b = await center('.row .tile:nth-child(2)');
-  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children · I styles`;
+  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children · I styles · S stacking`;
   await mouse('mouseMoved', a);
   await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
   const labelChrome = await evaluate(page, `(() => {
@@ -307,8 +307,10 @@ try {
       await assertLabelsApart('hovering a child of #gap-column');
       console.log('ok  colliding gap label hidden while its child is hovered');
     }
-    // hovering the container itself (its empty bottom-right corner) shows every gap label again
-    await mouse('mouseMoved', await evaluate(page, `(() => { const r = document.querySelector('#${id}').getBoundingClientRect(); return { x: r.right - 2, y: r.bottom - 2 }; })()`));
+    // hovering the container itself (its empty bottom-right corner) shows every gap label again. #gap-column: higher up its empty
+    // column, since in the 756px viewport the Hint flips left onto the spot below the box, and the W × H would stay above, on the 20
+    const up = id === 'gap-column' ? 'r.top + 32' : 'r.bottom - 2';
+    await mouse('mouseMoved', await evaluate(page, `(() => { const r = document.querySelector('#${id}').getBoundingClientRect(); return { x: r.right - 2, y: ${up} }; })()`));
     await poll(`gaps of #${id}`, gapLabels, (g) => JSON.stringify(g) === JSON.stringify(want));
     const n = await assertLabelsApart(`gaps of #${id}`);
     console.log(`ok  gaps of #${id}: ${want.join(' ')}, ${n} labels apart`);
@@ -671,6 +673,15 @@ try {
     await press('Escape', 'Escape', 27);
     await press('Escape', 'Escape', 27);
   }
+  // Stacking re-reads the selection's flat-tree chain every frame: the slotted box, through a closed root
+  const pressS = () => press('s', 'KeyS', 83, 's');
+  await evaluate(page, `document.querySelector('#stack-shadow').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-shadow-kid', 10, 10));
+  await pressS();
+  await poll('Stacking of #stack-shadow-kid', () => evaluate(page, `document.querySelectorAll('ui-measure-root')[0].shadowRoot.querySelectorAll('[data-stacking]').length`), (n) => n >= 2);
+  perfOf['stacking'] = await perf();
+  await press('Escape', 'Escape', 27);
+  await press('Escape', 'Escape', 27);
   await evaluate(page, `document.querySelector('#chain-9').scrollIntoView({ block: 'center' })`);
   await mouse('mouseMoved', await corner('#chain-9', 4, 4));
   perfOf['wrap-chain hover'] = await perf();
@@ -714,6 +725,165 @@ try {
   await press('Escape', 'Escape', 27);
   await press('Escape', 'Escape', 27);
   console.log('ok  crowded details: #icon-row gaps 10 10 in Blueprint, the left one with the pointer in it and resting on the icon beside it (the Hint steps aside); #tab-bar five 128 × 40, no 640 × 40');
+
+  // Stacking (ticket 26): S with a selection shows whether its z-index applies, the stacking context it competes in and why, and what clips it
+  const stackingOf = () =>
+    evaluate(page, `(() => {
+      const svg = document.querySelector('ui-measure-root').shadowRoot.querySelector('svg');
+      const box = (r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(',');
+      const label = (part) => svg.querySelector('[data-label][data-stacking="' + part + '"]')?.nextElementSibling.textContent ?? null;
+      const outline = (part) => {
+        const r = svg.querySelector('[data-stacking="' + part + '"]:not([data-label])');
+        return r ? { box: box(r), dash: r.getAttribute('stroke-dasharray') } : null;
+      };
+      return { label: label('label'), context: label('context'), clip: label('clip'), contextBox: outline('context'), clipBox: outline('clip') };
+    })()`);
+  const selectedIs = async (what, selector) => {
+    const want = await rectsOf([selector]);
+    await poll(what, outlines, (o) => JSON.stringify(o.selected) === JSON.stringify(want));
+  };
+  const STACKING_HINT = 'S / Esc to exit · I styles';
+  await evaluate(page, `document.querySelector('#stack-trap').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-trap-kid', 10, 10));
+  await selectedIs('select the trapped z 9999 box', '#stack-trap-kid');
+  await mouse('mouseMoved', { x: 8, y: 8 });
+  await poll('the Hint offers S stacking', hintOf, (h) => h?.text === SELECTION_HINT);
+  await pressS();
+  let st = await poll('S: z 9999, trapped by the transform parent', stackingOf, (o) => o.label === 'z 9999' && o.context === 'div.trap · transform, will-change · z 0');
+  assert.deepEqual(st.contextBox, { box: (await rectsOf(['#stack-trap .trap']))[0], dash: null }, 'the context: a solid outline on div.trap');
+  assert.equal(st.clip, null, 'nothing clips it');
+  assert.ok((await labelTexts()).includes('140 × 60'), 'the selection keeps its W × H');
+  await poll('the Hint in Stacking', hintOf, (h) => h?.text === STACKING_HINT);
+  await assertLabelsApart('Stacking of #stack-trap-kid');
+  // hidden while measuring, back on Alt release
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18, modifiers: 1 }, page);
+  await mouse('mouseMoved', { x: 8, y: 8 }, 1);
+  await poll('Stacking hidden while measuring', stackingOf, (o) => o.label === null && o.contextBox === null);
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
+  await poll('Stacking back on Alt release', stackingOf, (o) => o.label === 'z 9999');
+  // typing and IME composition keep it
+  await evaluate(page, `document.querySelector('input').focus({ preventScroll: true })`);
+  await pressS();
+  await evaluate(page, 'document.activeElement.blur()');
+  await evaluate(page, `window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS', isComposing: true }))`);
+  await evaluate(page, `document.querySelector('#stack-trap').scrollIntoView({ block: 'center' })`);
+  await sleep(100);
+  assert.equal((await stackingOf()).label, 'z 9999', 'S while typing / composing must not leave Stacking');
+  // B and S switch between the two views
+  await pressB();
+  await poll('B in Stacking switches to Blueprint', async () => ({ s: await stackingOf(), h: (await hintOf())?.text }), (o) => o.s.label === null && o.h === 'B / Esc to exit · I styles');
+  await pressS();
+  await poll('S in Blueprint switches to Stacking', async () => ({ s: await stackingOf(), h: (await hintOf())?.text }), (o) => o.s.label === 'z 9999' && o.h === STACKING_HINT);
+  // Esc: Styles, then Stacking, then the selection
+  await pressI();
+  await poll('Styles with Stacking', async () => ({ p: await stylesOf(), s: await stackingOf() }), (o) => o.p && o.s.label === 'z 9999');
+  await press('Escape', 'Escape', 27);
+  await poll('Esc closes Styles, Stacking stays', async () => ({ p: await stylesOf(), s: await stackingOf() }), (o) => o.p === null && o.s.label === 'z 9999');
+  await press('Escape', 'Escape', 27);
+  await poll('Esc leaves Stacking, the selection stays', async () => ({ s: await stackingOf(), o: await outlines() }), (o) => o.s.label === null && o.o.selected.length === 1);
+  await press('Escape', 'Escape', 27);
+  await poll('Esc clears the selection', outlines, (o) => o.selected.length === 0);
+  console.log('ok  S: #stack-trap-kid z 9999, context div.trap · transform, will-change · z 0 (solid outline); Hint; hidden while measuring; ignored while typing / composing; S / B switch; Esc: Styles → Stacking → selection');
+
+  // a 0 / auto tie, nothing drawn for an <html> context; a click off the selection picks the topmost box
+  await evaluate(page, `document.querySelector('#stack-tie').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-tie-b', 100, 50));
+  await pressS();
+  st = await poll('the later z auto box', stackingOf, (o) => o.label === 'z auto');
+  assert.equal(st.contextBox, null, 'its context is <html>: nothing drawn');
+  await select(await corner('#stack-tie-a', 10, 10));
+  await selectedIs('a click off the selection selects the topmost box', '#stack-tie-a');
+  await poll('the earlier z 0 box', stackingOf, (o) => o.label === 'z 0');
+
+  // a negative z-index under its plain parent: click the parent again → the box below it at that point
+  await evaluate(page, `document.querySelector('#stack-neg').scrollIntoView({ block: 'center' })`);
+  const underParent = await corner('#stack-neg-kid', 20, 20);
+  await select(underParent);
+  await selectedIs('the click lands on the parent, over its z -1 child', '#stack-neg');
+  await mouse('mouseMoved', underParent);
+  await poll('the Hint offers a click below', hintOf, (h) => h?.text === `${STACKING_HINT} · Click again → below`);
+  assert.ok(!(await labelTexts()).includes('16'), 'Stacking hides the padding values');
+  // it paints under every in-flow block of <html>'s context, so clicks go down past them (the section, main, body) to reach it
+  const kid = JSON.stringify(await rectsOf(['#stack-neg-kid']));
+  let downs = 0;
+  // the outline glides to each box: compare once it stops
+  const selectionSettled = async () => {
+    for (let before = ''; ; await sleep(50)) {
+      const now = JSON.stringify((await outlines()).selected);
+      if (now === before) return now;
+      before = now;
+    }
+  };
+  while (downs < 6 && (await selectionSettled()) !== kid) {
+    await click(underParent);
+    downs++;
+  }
+  await selectedIs('click again → down past the page\'s blocks to the z -1 child', '#stack-neg-kid');
+  assert.ok(downs > 1, `the z -1 child is under the page's blocks, not right under its parent: ${downs} clicks`);
+  await poll('z -1, in <html>', stackingOf, (o) => o.label === 'z -1' && o.contextBox === null);
+
+  // a static box: z-index does nothing, in Stacking and in Styles
+  await evaluate(page, `document.querySelector('#stack-static').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-static', 10, 10));
+  await poll('static z 5', stackingOf, (o) => o.label === 'z 5 · no effect (static)');
+  await pressI();
+  await poll('Styles: z-index 5 does nothing', stylesOf, (p) => p?.rows.includes('z-index  5 · no effect (static)'));
+  await pressI();
+
+  // clipped by overflow: hidden, a dashed outline on its padding box
+  await evaluate(page, `document.querySelector('#stack-clip').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-clip-kid', 10, 10));
+  st = await poll('clipped by its parent', stackingOf, (o) => o.clip === 'clipped by div#stack-clip · overflow hidden');
+  assert.deepEqual(st.clipBox, { box: (await rectsOf(['#stack-clip']))[0], dash: '4 3' }, 'the clip: a dashed outline on #stack-clip');
+  assert.equal(st.label, null, 'a plain box has no label');
+
+  // a slotted z 9999 trapped by a transform inside a closed root
+  await evaluate(page, `document.querySelector('#stack-shadow').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-shadow-kid', 10, 10));
+  st = await poll('the slotted box is trapped by the div around its slot', stackingOf, (o) => o.label === 'z 9999' && o.context === 'div · transform · z 0');
+  const host = await evaluate(page, `(() => { const r = document.querySelector('#stack-shadow-host').getBoundingClientRect(); return [r.x, r.y].map(Math.round).join(','); })()`);
+  assert.equal(st.contextBox.box, `${host},220,70`, 'the context outline is the shadow <div>');
+
+  // z-index on a slotted flex item: the host is its layout parent through a bare <slot>, a <div> around the slot is not
+  for (const [id, want] of [['#stack-slot-bare-kid', 'z 5'], ['#stack-slot-div-kid', 'z 5 · no effect (static)']]) {
+    await evaluate(page, `document.querySelector('${id}').scrollIntoView({ block: 'center' })`);
+    await select(await corner(id, 10, 10));
+    await selectedIs(`select ${id}`, id);
+    await poll(`${id}: ${want}`, stackingOf, (o) => o.label === want);
+  }
+  await pressI();
+  await poll('Styles: z-index 5 does nothing under the <div> around the slot', stylesOf, (p) => p?.rows.includes('z-index  5 · no effect (static)'));
+  await pressI();
+
+  // position: fixed doesn't escape its z 1 parent
+  await evaluate(page, `document.querySelector('#stack-fixed').hidden = false`);
+  await select(await corner('#stack-fixed-kid', 150, 70));
+  await poll('fixed z 9999 in the z 1 parent', stackingOf, (o) => o.label === 'z 9999 · fixed' && o.context === 'div.holder · z 1');
+  await evaluate(page, `document.querySelector('#stack-fixed').hidden = true`);
+
+  // the motivating case: a modal visible under a translucent backdrop
+  await evaluate(page, `document.querySelector('#stack-modal').scrollIntoView({ block: 'center' })`);
+  const modal = await center('#stack-modal-box');
+  await select(modal);
+  await selectedIs('a click on the modal lands on the backdrop', '#stack-modal-backdrop');
+  await poll('the backdrop z 2', stackingOf, (o) => o.label === 'z 2');
+  await click(modal);
+  await selectedIs('click again → the modal below', '#stack-modal-box');
+  await poll('the modal z 1', stackingOf, (o) => o.label === 'z 1');
+  await click(modal);
+  await selectedIs('click again → the stage below it', '#stack-modal');
+  for (let i = 0; i < 8; i++) await click(modal);
+  await selectedIs('the bottom: <html>', 'html');
+  await click(modal);
+  await selectedIs('…where it stays', 'html');
+  // outside Stacking a click again still climbs; the first click after leaving selects what it hits
+  await pressS();
+  await select(modal);
+  await selectedIs('outside Stacking: the backdrop', '#stack-modal-backdrop');
+  await click(modal);
+  await selectedIs('outside Stacking: click again climbs to its parent', '#stack-modal');
+  await press('Escape', 'Escape', 27);
+  console.log('ok  Stacking: 0 / auto tie, <html> context not drawn, a click elsewhere picks the topmost; z -1 under its parent, click again → below; static z 5 no effect (Styles too); clipped by overflow hidden (dashed); slotted box trapped in a closed root; slotted z 5 applies through a bare <slot>, not under a <div> around it (Styles too); fixed in a z 1 parent; modal under a backdrop: click again → below, down to <html>; climbs outside Stacking');
 
   // copy: C writes the last selection's spec; read back through this page, a secure origin
   await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
@@ -976,9 +1146,18 @@ try {
     await mouse('mouseMoved', await center(inner));
     const [want] = await rectsOf([inner]);
     await poll(`hover outline inside the ${what}`, () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`), (o) => o.includes(want));
+    // Stacking: inside, the top-layer box is the context; click again → it, in the top layer
+    await select(await center(inner));
+    await pressS();
+    const box = what === 'dialog' ? 'dialog' : 'div#pop';
+    await poll(`Stacking inside the ${what}`, stackingOf, (o) => o.context === `${box} · top layer`);
+    await click(await center(inner));
+    await poll(`click again → the ${what}: top layer`, stackingOf, (o) => o.label === `top layer (${what})` && o.contextBox === null);
+    await press('Escape', 'Escape', 27);
+    await press('Escape', 'Escape', 27);
     // an open modal makes the rest of the page inert
     await evaluate(page, close);
-    console.log(`ok  ${what} opened while ON: overlay re-promoted above it, hover measures inside`);
+    console.log(`ok  ${what} opened while ON: overlay re-promoted above it, hover measures inside; Stacking inside names it as the top-layer context, click again → top layer (${what})`);
   }
 
   // iframes: every frame the tool can reach draws its own overlay; the cross-origin one (localhost) needs host access

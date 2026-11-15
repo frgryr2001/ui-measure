@@ -202,6 +202,25 @@ export function sizeSpots(b: Rect, text: string): Point[] {
 }
 
 /**
+ * Spots for the label of an outlined ancestor, `b` already cut to the viewport: just inside its top-left corner, then the
+ * other corners, then just above its top-left, then beside its top on the right and the left. Inside first, since a large
+ * ancestor's outside is often off-screen; outside last, for a small one whose inside the selection's labels fill.
+ */
+export function cornerSpots(b: Rect, text: string): Point[] {
+  const dx = CLEARANCE + labelWidth(text) / 2;
+  const dy = CLEARANCE + LABEL_H / 2;
+  return [
+    { x: b.left + dx, y: b.top + dy },
+    { x: b.right - dx, y: b.top + dy },
+    { x: b.left + dx, y: b.bottom - dy },
+    { x: b.right - dx, y: b.bottom - dy },
+    { x: b.left + dx, y: b.top - dy },
+    { x: b.right + dx, y: b.top + dy },
+    { x: b.left - dx, y: b.top + dy },
+  ];
+}
+
+/**
  * Pass-2 spots of a W × H whose near spots are taken or would cover a one-line control. Straight out
  * first, then one label-width to either side so the leader can leave from the corner and miss a number
  * already centered on that side. 40 is MAX_LEADER.

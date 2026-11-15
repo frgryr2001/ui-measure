@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Rect } from './rect';
+import type { ZNoEffect } from './stacking';
 import { DEFAULTS, STYLES_OFFSET, placeStyles, styleRows, stylesSize, type Computed } from './styles';
 
 // a bare <div> in Chrome 148, plus overrides
 const of = (over: Partial<Computed>): Computed => ({ ...DEFAULTS, ...over });
-const rows = (over: Partial<Computed> = {}) => styleRows(of(over)).map((group) => group.map(({ name, value }) => `${name}  ${value}`));
+const rows = (over: Partial<Computed> = {}, zNoEffect: ZNoEffect = null) => styleRows(of(over), zNoEffect).map((group) => group.map(({ name, value }) => `${name}  ${value}`));
 
 describe('styleRows', () => {
   it('a bare element shows only display, the font and color', () => {
@@ -25,6 +26,14 @@ describe('styleRows', () => {
     ]);
     expect(rows({ display: 'grid', ...flexish })[0]).toEqual(['display  grid', 'grid-template-columns  100px 200px']);
     expect(rows({ ...flexish })[0]).toEqual(['display  block']);
+  });
+
+  it('a z-index that does nothing says so, and why', () => {
+    expect(rows({ 'z-index': '5' }, 'static')[0]).toEqual(['display  block', 'z-index  5 · no effect (static)']);
+    expect(rows({ 'z-index': '5' }, 'svg')[0]).toEqual(['display  block', 'z-index  5 · no effect (svg)']);
+    expect(rows({ position: 'relative', 'z-index': '5' })[0]).toEqual(['display  block', 'position  relative', 'z-index  5']);
+    // auto has no row, so nothing to say
+    expect(rows({}, 'static')[0]).toEqual(['display  block']);
   });
 
   it('text: line height on its own row after the size, letter spacing and alignment when changed', () => {

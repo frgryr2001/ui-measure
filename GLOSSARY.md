@@ -16,7 +16,7 @@ The unit of every number the tool shows: the px you write in CSS. Browser zoom n
 The box a click would select at the pointer while measure mode is on (see Selection).
 
 **Selection**
-The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper. Elements sharing its bounds, each the only child of the next, are one box, kept as Blueprint keeps it: the inner one with padding or border (else a rounded wrapper over a plain child), showing a wrapper's corner radius when it has none of its own. `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up, past its same-size wrappers, so a container its children cover is still reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
+The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper. Elements sharing its bounds, each the only child of the next, are one box, kept as Blueprint keeps it: the inner one with padding or border (else a rounded wrapper over a plain child), showing a wrapper's corner radius when it has none of its own. `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up, past its same-size wrappers, so a container its children cover is still reachable; in Stacking it selects the next box *below* it at that point instead, so a box under another (a modal under its backdrop) is reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
 
 **Details**
 The numbers of the one selected element, shown on select with no key: W × H, padding, corner radius and, for a container, its gaps. Margins are drawn as a band without numbers (a distance to a neighbour is a measurement). Not shown for a multi-selection or while measuring; a hover target shows only its outline, W × H and bands.
@@ -54,6 +54,18 @@ _Avoid_: info, tooltip (that is the Hint), inspector
 **Blueprint**
 `B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline, plus hatched padding, gaps and corner radius. A descendant holding two or more drawn boxes (a row, a list) shows its W × H only when hovered, since its label would sit where its middle child's does; the rest show theirs. A wrapper whose only child has its bounds counts as one box (with the wrapper's radius when the child has none); depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
 _Avoid_: X-ray (a plain outline of every element on the page), overview
+
+**Stacking context**
+The CSS term: a box whose descendants' z-indexes compete only among themselves, so the whole group is ordered as one box against the rest. Made by about 25 conditions in Chrome (positioned with a z-index, `fixed` / `sticky`, `opacity` below 1, a transform, a filter, `isolation`, `will-change`, containment, the top layer, …); `<html>` is the page's own. A z-index applies only to a positioned box or a flex / grid item; elsewhere it does nothing, though its computed value still reads as declared.
+_Avoid_: layer (a composited layer is something else), z-context
+
+**Clipped**
+Cut by an ancestor that cuts the painting of what it contains (`overflow` other than visible, `clip-path`, `contain: paint`), where the selection's bounds run past that ancestor's box. Not stacking: no z-index fixes it.
+_Avoid_: hidden (that is a label with no free spot), covered
+
+**Stacking**
+`S` with a selection: whether the last-selected element's z-index applies, the stacking context it competes in (solid outline) and every reason that ancestor is one, and the ancestor that clips it (dashed outline). Each part shows only when it differs from the plain case; nothing for an `<html>` context. Click again goes down (see Selection). `S` or `Esc` returns to the selection; exclusive with Blueprint, shown with Styles, hidden while measuring.
+_Avoid_: inspector, z-index view, 3D view
 
 **Leader**
 A dashed line from a details value (padding, gap, corner radius) to the band, gap line or corner it describes, drawn when the value has no free spot next to it and sits a little away instead. A value with no free spot even then is hidden.

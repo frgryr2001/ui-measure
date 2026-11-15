@@ -1,6 +1,7 @@
 import { APART, CHAR_W } from './labels';
 import { formatPx, type Rect } from './rect';
 import { shorthand } from './spec';
+import type { ZNoEffect } from './stacking';
 
 /**
  * Computed values of a bare <div> (Chrome 148), by the name `getPropertyValue` takes: the properties
@@ -114,14 +115,17 @@ function marginRows(v: string): StyleRow[] {
 // any fully transparent color, not only `transparent`'s rgba(0, 0, 0, 0): `oklab(0 0 0 / 0)` too
 const isTransparent = (v: string) => /(,|\/)\s*0\)$/.test(v);
 
-/** The Styles panel's rows for one element, in groups (layout, text, fill, border, effects, margin); a row shows only when it differs from `DEFAULTS`, except display, the font and color. Empty groups are left out. */
-export function styleRows(c: Computed): StyleRow[][] {
+/**
+ * The Styles panel's rows for one element, in groups (layout, text, fill, border, effects, margin); a row shows only when it differs from `DEFAULTS`, except display, the font and color. Empty groups are left out.
+ * `zNoEffect`: why its z-index does nothing (`zNoEffect` in stacking.ts), since the computed value reads as declared even then.
+ */
+export function styleRows(c: Computed, zNoEffect: ZNoEffect = null): StyleRow[][] {
   // the property's own row, when it is not the default
   const changed = (name: keyof Computed) => (c[name] === DEFAULTS[name] ? [] : [row(name, c[name])]);
   const layout = [
     row('display', c.display),
     ...changed('position'),
-    ...changed('z-index'),
+    ...(zNoEffect && c['z-index'] !== 'auto' ? [row('z-index', `${c['z-index']} · no effect (${zNoEffect})`)] : changed('z-index')),
     ...changed('overflow'),
     ...changed('box-sizing'),
     ...(c.display.endsWith('flex') ? [...changed('flex-direction'), ...changed('justify-content'), ...changed('align-items')] : []),

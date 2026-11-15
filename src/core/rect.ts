@@ -47,6 +47,12 @@ export const union = (rects: Rect[]): Rect | null =>
         bottom: Math.max(...rects.map((r) => r.bottom)),
       };
 
+/** The part of `a` inside `b`; null when they don't overlap. */
+export function intersect(a: Rect, b: Rect): Rect | null {
+  const r = { left: Math.max(a.left, b.left), top: Math.max(a.top, b.top), right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) };
+  return r.left < r.right && r.top < r.bottom ? r : null;
+}
+
 /** Label text: at most 2 decimals, no trailing zeros ("16", "16.5", "16.33"). */
 export const formatPx = (n: number) => String(Number(n.toFixed(2)));
 

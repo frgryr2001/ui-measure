@@ -4,6 +4,8 @@ const BLUE = '#3b82f6';
 const RED = '#f24822';
 const PURPLE = '#a855f7';
 const GREEN = '#16a34a';
+// apart from the blue / red / purple / green in use; white text on it ≈ 4.8:1
+const PINK = '#db2777';
 const DASH = '4 3';
 const SHADOW = '0 4px 12px rgb(0 0 0 / 0.3)';
 const DARK = 'rgb(24 24 27 / 0.92)';
@@ -26,6 +28,8 @@ export const theme = {
   blueprint: { outline: BLUE, outlineWidth: 1, outlineDash: DASH },
   /** A details value placed away from what it describes: a dashed line in its label's color, with a dot (`dot`: radius) on the target. */
   leader: { width: 1, dash: '2 2', dot: 2 },
+  /** `S`: the selection's stacking context (solid) and the ancestor that clips it (dashed), and their labels. */
+  stacking: { label: PINK, outline: PINK, outlineWidth: 1.5, clipDash: DASH },
   /** Corner arcs and their `r` labels. */
   radius: { label: BLUE, arc: BLUE, arcWidth: 1.5 },
   hint: {

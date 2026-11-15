@@ -2,6 +2,7 @@ import { classify, keptInChain, radii, same, type Corner, type Corners, type Loo
 import { gapFlow, gaps, type Gap } from './gap';
 import { height, inset, scaleEdges, scaleOf, width, type Edges, type Rect } from './rect';
 import { selectorOf, type Spec, type Step } from './spec';
+import { ANIMATED, STACK_DEFAULTS, STACK_PROPERTIES, clipLabel, clippers, contextLabel, runsPast, selectionLabel, shortSelector, stackingReasons, zApplies, zNoEffect, type StackStyle, type ZNoEffect } from './stacking';
 import { DEFAULTS, STYLE_PROPERTIES, type Computed } from './styles';
 
 export type Boxes = { margin: Rect; border: Rect; padding: Rect; content: Rect };
@@ -130,6 +131,44 @@ export const boxAt = (el: Element, ignore: Element, shadowOf: ShadowOf): Element
 /** The element whose corner radius the selected `el` shows: itself, or a same-size wrapper merged into it (`keptInChain`). */
 export const roundOf = (el: Element, ignore: Element, shadowOf: ShadowOf): Element => keptInChain(sameSizeChain(el, ignore, shadowOf)).round;
 
+/**
+ * Every element at a viewport point, topmost first, walking into shadow roots like `deepElementAt`: a host's shadow
+ * elements come right before it (`elementsFromPoint` names only the host for them).
+ */
+function deepElementsAt(x: number, y: number, ignore: Element, shadowOf: ShadowOf): Element[] {
+  const inside = (root: Document | ShadowRoot): Element[] =>
+    root.elementsFromPoint(x, y).filter((e) => e !== ignore && e.getRootNode() === root).flatMap((e) => {
+      const shadow = shadowOf(e);
+      return shadow ? [...inside(shadow), e] : [e];
+    });
+  return inside(document);
+}
+
+// shortcut: elementsFromPoint skips pointer-events: none and inert content, so those can't be reached; read the paint order instead if pages need them.
+/**
+ * Where clicking the selected `el` again in Stacking goes: the box of the next element under it at (x, y), past its same-size
+ * wrappers; `el` itself at the bottom (`<html>`). Null when nothing at that point is `el`, where a click selects the topmost box.
+ */
+export function boxBelow(el: Element, x: number, y: number, ignore: Element, shadowOf: ShadowOf): Element | null {
+  const stack = deepElementsAt(x, y, ignore, shadowOf);
+  const i = stack.indexOf(el);
+  if (i < 0) return null;
+  const chainOf = (e: Element) => new Set(sameSizeChain(e, ignore, shadowOf).map((c) => c.node));
+  const wrappers = chainOf(el);
+  for (let j = i + 1; j < stack.length; j++) {
+    const e = stack[j];
+    if (!e || wrappers.has(e)) continue;
+    const box = boxAt(e, ignore, shadowOf);
+    if (box === el) continue;
+    // same-size wrappers with something else painted between them (a z -1 box between <body> and <html>) are not
+    // one box here: the element itself, so what lies between stays reachable
+    const k = stack.indexOf(box);
+    const chain = chainOf(e);
+    return k > j && stack.slice(j + 1, k).some((s) => !chain.has(s)) ? e : box;
+  }
+  return el;
+}
+
 /** Where clicking the selected `el` again climbs: the box of the first ancestor past its same-size wrappers; `el` itself at the top of the page. */
 export function boxAbove(el: Element, ignore: Element, shadowOf: ShadowOf): Element {
   const parent = parentOf(sameSizeChain(el, ignore, shadowOf).at(-1)?.node ?? el);
@@ -168,6 +207,83 @@ export function readRadii(el: Element, b: Rect): Corners {
   const [tl, tr, br, bl] = cssRadii(el, b, z);
   const zoomed = ([x, y]: Corner): Corner => [x * z, y * z];
   return [zoomed(tl), zoomed(tr), zoomed(br), zoomed(bl)];
+}
+
+/**
+ * Flat-tree parent: the slot a slotted element is assigned to, the host for a shadow root's child. The slot is searched
+ * through `shadowOf`, since `assignedSlot` is null in a closed root. Only Stacking walks it; `parentOf` skips slots.
+ */
+function flatParent(el: Element, shadowOf: ShadowOf): Element | null {
+  if (el.assignedSlot) return el.assignedSlot;
+  const root = el.parentElement && shadowOf(el.parentElement);
+  if (root) for (const slot of root.querySelectorAll('slot')) if (slot.assignedNodes().includes(el)) return slot;
+  return parentOf(el);
+}
+
+// boxes inside an <svg> (not the outer one) paint in document order: z-index and their transforms don't stack there
+const inSvg = (el: Element) => el instanceof SVGElement && el.ownerSVGElement !== null;
+
+/** Why `el`'s z-index does nothing (`zNoEffect`), null where it applies: for the Styles `z-index` row. */
+export function readZNoEffect(el: Element, shadowOf: ShadowOf): ZNoEffect {
+  let parent = flatParent(el, shadowOf);
+  // the layout parent: the first flat-tree ancestor with a box (slots are display: contents)
+  while (parent && getComputedStyle(parent).display === 'contents') parent = flatParent(parent, shadowOf);
+  return zNoEffect(inSvg(el), zApplies(getComputedStyle(el).position, parent ? getComputedStyle(parent).display : ''));
+}
+
+function stackStyle(el: Element, ignore: Element): StackStyle {
+  const cs = getComputedStyle(el);
+  const read: StackStyle = { ...STACK_DEFAULTS, tag: el.localName, root: el === document.documentElement, svg: inSvg(el), topLayer: null, opacity: 1, animated: false };
+  for (const p of STACK_PROPERTIES) read[p] = cs.getPropertyValue(p);
+  // our own host is a top-layer popover too
+  if (el !== ignore && cs.getPropertyValue('overlay') === 'auto') read.topLayer = el.localName === 'dialog' ? 'dialog' : el.matches(':fullscreen') ? 'fullscreen' : 'popover';
+  // the string rounds to 6 digits ("1" for 0.9999999); Typed OM keeps the float
+  const opacity = el.computedStyleMap().get('opacity');
+  read.opacity = opacity instanceof CSSUnitValue ? opacity.value : parseFloat(cs.opacity);
+  read.animated = el.getAnimations().some((a) => (a.playState === 'running' || a.playState === 'paused') && a.effect instanceof KeyframeEffect && a.effect.getKeyframes().some((k) => ANIMATED.some((p) => p in k)));
+  return read;
+}
+
+/** What Stacking shows for `el`: labels, and the boxes of the context and the clipping ancestor to outline. */
+export type Stacking = {
+  /** The selection's own label, null in the plain case (`selectionLabel`). */
+  label: string | null;
+  /** The nearest flat-tree ancestor that is a stacking context, null when it is <html> or `el` is in the top layer. */
+  context: { box: Rect; label: string } | null;
+  /** The nearest ancestor that cuts `el`'s painting and that `el`'s bounds run past (`clippers`), at the box it cuts at. */
+  clip: { box: Rect; label: string } | null;
+};
+
+/** `el`'s Stacking, from its flat-tree chain up to <html> (re-read each frame like geometry; 0.05–0.4 ms on real pages). */
+export function readStacking(el: Element, ignore: Element, shadowOf: ShadowOf): Stacking {
+  const chain: Element[] = [];
+  for (let e: Element | null = el; e; e = flatParent(e, shadowOf)) chain.push(e);
+  const styles = chain.map((e) => stackStyle(e, ignore));
+  // z-index applies by the layout parent: the next one up with a box
+  const applies = (i: number) => {
+    const s = styles[i];
+    return !!s && zApplies(s.position, styles.slice(i + 1).find((p) => p.display !== 'contents')?.display ?? '');
+  };
+  const name = (e: Element) => shortSelector(e.localName, e.id, e.classList);
+  const [self] = styles;
+  const at = self?.topLayer ? -1 : styles.findIndex((s, i) => i > 0 && (s.root || stackingReasons(s, applies(i)).length > 0));
+  const ctx = chain[at];
+  const ctxStyle = styles[at];
+  const b = bounds(el);
+  let clip: Stacking['clip'] = null;
+  for (const c of clippers(styles)) {
+    const e = chain[c.index];
+    const box = e && (c.box === 'border' ? bounds(e) : readBoxes(e).padding);
+    if (e && box && runsPast(b, box)) {
+      clip = { box, label: clipLabel(name(e), c.why) };
+      break;
+    }
+  }
+  return {
+    label: self ? selectionLabel(self, applies(0)) : null,
+    context: ctx && ctxStyle && !ctxStyle.root ? { box: bounds(ctx), label: contextLabel(name(ctx), ctxStyle, applies(at)) } : null,
+    clip,
+  };
 }
 
 /** True when keyboard focus is in an editable field of the page (not our own UI). */

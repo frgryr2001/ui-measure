@@ -234,6 +234,56 @@
       </script>
     </section>
 
+    <section>
+      <h2>Stacking: select a box, press S · trapped z 9999 under z 1 (div.trap · transform, will-change · z 0) · 0 / auto tie (the later wins) · z -1 under its plain parent (click the parent again → below) · static z 5 (no effect) · clipped by overflow hidden · modal under a backdrop (click again → below) · slotted z 9999 trapped in a closed root · slotted z 5 in a flex host: applies through a bare slot, not inside a div around it · fixed z 9999 in a z 1 parent, under a z 2 sibling</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+        <div id="stack-trap" style="position:relative;width:300px;height:100px">
+          <div class="trap" style="transform:translateX(0);will-change:transform;width:200px;padding:10px;background:#e0e7ff">
+            <div id="stack-trap-kid" style="position:relative;z-index:9999;width:140px;height:60px;background:#f9a8d4">z 9999</div>
+          </div>
+          <div id="stack-trap-over" style="position:absolute;z-index:1;left:110px;top:30px;width:160px;height:60px;background:#fde68a">z 1</div>
+        </div>
+        <div id="stack-tie" style="position:relative;width:200px;height:90px">
+          <div id="stack-tie-a" style="position:absolute;z-index:0;left:0;top:0;width:120px;height:60px;background:#c7d2fe">z 0</div>
+          <div id="stack-tie-b" style="position:absolute;left:60px;top:24px;width:120px;height:60px;background:#fbcfe8">z auto, later: on top</div>
+        </div>
+        <div>
+          <div id="stack-neg" style="width:220px;padding:16px;background:#e0e7ff">plain parent<div id="stack-neg-kid" style="position:relative;z-index:-1;left:60px;width:200px;height:40px;background:#f9a8d4">z -1</div></div>
+        </div>
+        <div>
+          <div id="stack-static" style="z-index:5;width:220px;padding:8px;background:#e0e7ff">static, z-index 5</div>
+        </div>
+        <div>
+          <div id="stack-clip" style="width:220px;height:48px;overflow:hidden;background:#e0e7ff"><div id="stack-clip-kid" style="width:320px;height:32px;margin:8px;background:#f9a8d4">wider than its overflow: hidden parent</div></div>
+        </div>
+        <div id="stack-modal" style="position:relative;width:360px;height:160px;background:#fff">
+          <div id="stack-modal-box" style="position:absolute;z-index:1;left:60px;top:30px;width:240px;height:100px;border-radius:8px;background:#fff;box-shadow:0 4px 12px rgb(0 0 0 / 0.25)"></div>
+          <div id="stack-modal-backdrop" style="position:absolute;z-index:2;inset:0;background:rgba(15, 23, 42, 0.4)"></div>
+        </div>
+        <div id="stack-shadow" style="position:relative;width:300px;height:90px">
+          <div id="stack-shadow-host"><div id="stack-shadow-kid" style="position:relative;z-index:9999;width:140px;height:50px;background:#f9a8d4">slotted z 9999</div></div>
+          <div id="stack-shadow-over" style="position:absolute;z-index:1;left:110px;top:20px;width:160px;height:60px;background:#fde68a">z 1</div>
+        </div>
+        <div id="stack-slot-bare"><div id="stack-slot-bare-kid" style="z-index:5;width:140px;height:30px;background:#c7d2fe">slotted z 5: applies</div></div>
+        <div id="stack-slot-div"><div id="stack-slot-div-kid" style="z-index:5;width:140px;height:30px;background:#c7d2fe">slotted z 5: no effect</div></div>
+      </div>
+      <button type="button" onclick="const f = document.querySelector('#stack-fixed'); f.hidden = !f.hidden">Show / hide the fixed boxes (bottom right)</button>
+      <div id="stack-fixed" hidden>
+        <div class="holder" style="position:relative;z-index:1;width:260px;margin-top:8px;padding:4px;background:#e0e7ff">z 1 parent holding a fixed box
+          <div id="stack-fixed-kid" style="position:fixed;z-index:9999;right:40px;bottom:40px;width:160px;height:80px;background:#f9a8d4">fixed z 9999</div>
+        </div>
+        <div id="stack-fixed-over" style="position:fixed;z-index:2;right:100px;bottom:70px;width:160px;height:80px;background:#fde68a">fixed z 2</div>
+      </div>
+      <script>
+        // a transform on the <div> around the <slot>, inside a closed root, traps the slotted box (research probe O18)
+        document.querySelector('#stack-shadow-host').attachShadow({ mode: 'closed' }).innerHTML = '<div style="transform:translateX(0);width:200px;padding:10px;background:#e0e7ff"><slot></slot></div>';
+        // flex hosts: through a bare <slot> the slotted box is a flex item and its z-index applies; inside a <div> around the slot it is static
+        const flexHost = '<style>:host{display:flex;padding:8px;background:#fff}</style>';
+        document.querySelector('#stack-slot-bare').attachShadow({ mode: 'closed' }).innerHTML = `${flexHost}<slot></slot>`;
+        document.querySelector('#stack-slot-div').attachShadow({ mode: 'closed' }).innerHTML = `${flexHost}<div><slot></slot></div>`;
+      </script>
+    </section>
+
     <div style="height:800px"></div>
   </main>
 </body>
