@@ -2,7 +2,7 @@
   "name": "ui-measure",
   "description": "Measure size and spacing of elements on any web page",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
