@@ -194,7 +194,8 @@ try {
   };
   const a = await center('.row .tile:nth-child(1)');
   const b = await center('.row .tile:nth-child(2)');
-  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · C copy · B children · I styles · S stacking`;
+  // Copy is paused (src/core/hint.ts COPY). Put `C copy · ` back here when that flag is true.
+  const SELECTION_HINT = `${MAC ? '⌥ Option' : 'Alt'} measure · B children · I styles · S stacking`;
   await mouse('mouseMoved', a);
   await poll('hint with nothing selected', hintOf, (h) => h?.text === 'Click to select');
   const labelChrome = await evaluate(page, `(() => {
@@ -234,7 +235,7 @@ try {
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Alt', code: 'AltLeft', windowsVirtualKeyCode: 18 }, page);
   await poll('Alt released', overlay, (o) => o.chip === null && o.lines === 0);
   await poll('hint back after Alt', hintOf, (h) => h?.text === SELECTION_HINT);
-  console.log('ok  hint: click to select → measure / copy / children (+ parent on the selection), 16px off the pointer, flips at the corner, hidden while measuring');
+  console.log('ok  hint: click to select → measure / children (+ parent on the selection), 16px off the pointer, flips at the corner, hidden while measuring');
   console.log(`ok  Alt hold still shows ${CHIP}`);
 
   // selection: outlines are compared to the page's own rects, rounded to 1px
@@ -937,14 +938,17 @@ try {
   await press('Escape', 'Escape', 27);
   await press('Escape', 'Escape', 27);
 
-  // copy: C writes the last selection's spec; read back through this page, a secure origin
-  await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
-  // readText rejects in a page without focus
-  await send('Emulation.setFocusEmulationEnabled', { enabled: true }, page);
+  // Copy is paused. Keep this in step with `COPY` in src/core/hint.ts: the checks stay for when it is turned back on.
+  const COPY = false;
   const clipboard = () => evaluate(page, 'navigator.clipboard.readText()');
   const labelsOf = (session) =>
     evaluate(session, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label] + text')].map((t) => t.textContent)`);
   const pressC = (session = page) => press('c', 'KeyC', 67, 'c', 0, session);
+  if (COPY) {
+  // copy: C writes the last selection's spec; read back through this page, a secure origin
+  await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+  // readText rejects in a page without focus
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true }, page);
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   await select(await corner('#bp-card', 160, 8));
   await pressC();
@@ -991,6 +995,7 @@ try {
   await pressC();
   await poll('CSS through navigator.clipboard', clipboard, (t) => t.startsWith('/* div.tile */') && t !== text);
   console.log(`ok  C: selector ${selector} finds the tile again; navigator.clipboard fallback`);
+  }
 
   // scaled box model: inside a scale(0.5) parent, the hover bands must line up with the rendered boxes
   await evaluate(page, `document.querySelector('#scaled').scrollIntoView({ block: 'center' })`);
@@ -1274,6 +1279,7 @@ try {
   console.log('ok  Esc in a frame: clears its selection, then turns every frame off and clears the badge');
 
   // plain http is not a secure context: no navigator.clipboard, the copy command still writes
+  if (COPY) {
   const httpUrl = `http://uim.test:${server.address().port}/`;
   const { targetId: httpTarget } = await send('Target.createTarget', { url: httpUrl });
   const { sessionId: httpPage } = await send('Target.attachToTarget', { targetId: httpTarget, flatten: true });
@@ -1294,6 +1300,7 @@ try {
   assert.equal(await clipboard(), httpCss, 'a failed copy must leave the clipboard alone');
   await send('Target.closeTarget', { targetId: httpTarget });
   console.log('ok  copy works on http; clear message when the clipboard is unavailable');
+  }
 
   // a granted cross-origin host: headless Chrome can't answer the permission prompt of the icon's menu,
   // so a copy of the build grants localhost up front, as the port-less pattern the menu asks for

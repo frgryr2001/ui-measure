@@ -13,12 +13,12 @@ describe('hintParts', () => {
   });
 
   it('a selection: measure, copy, children, styles, stacking; parent only where a click would climb', () => {
-    expect(read(hintParts({ kind: 'selection', climbs: false }, false))).toBe('[Alt] measure · [C] copy · [B] children · [I] styles · [S] stacking');
-    expect(read(hintParts({ kind: 'selection', climbs: true }, false))).toBe('[Alt] measure · [C] copy · [B] children · [I] styles · [S] stacking · [Click] again → parent');
+    expect(read(hintParts({ kind: 'selection', climbs: false }, false))).toBe('[Alt] measure · [B] children · [I] styles · [S] stacking');
+    expect(read(hintParts({ kind: 'selection', climbs: true }, false))).toBe('[Alt] measure · [B] children · [I] styles · [S] stacking · [Click] again → parent');
   });
 
   it('on a Mac the measure key reads the way its keyboard prints it', () => {
-    expect(read(hintParts({ kind: 'selection', climbs: false }, true))).toBe('[⌥ Option] measure · [C] copy · [B] children · [I] styles · [S] stacking');
+    expect(read(hintParts({ kind: 'selection', climbs: false }, true))).toBe('[⌥ Option] measure · [B] children · [I] styles · [S] stacking');
   });
 
   it('Styles open: I or Esc to close', () => {

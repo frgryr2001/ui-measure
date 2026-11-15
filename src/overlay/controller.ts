@@ -9,6 +9,7 @@ import { formatPx, height, intersect, ring, sizeLabel, union, width, type Rect }
 import { css } from '../core/spec';
 import { pairVerdict, pairWorthShowing } from '../core/stacking';
 import { placeStyles, styleRows, stylesSize, type StyleRow } from '../core/styles';
+import { COPY } from '../core/hint';
 import { copyText } from './clipboard';
 
 declare global {
@@ -200,9 +201,9 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       wake();
       return;
     }
-    // Copy: the last-selected element's spec as CSS
+    // Copy: the last-selected element's spec as CSS. Off while `COPY` is false; the key then reaches the page.
     const from = selected.at(-1);
-    if (e.code === 'KeyC' && from && isBareKeydown(e)) {
+    if (COPY && e.code === 'KeyC' && from && isBareKeydown(e)) {
       if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();

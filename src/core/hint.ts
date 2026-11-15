@@ -19,6 +19,9 @@ const key = (label: string): HintPart => ({ kind: 'key', text: label });
 const text = (label: string): HintPart => ({ kind: 'text', text: label });
 const DOT = text('·');
 
+/** Copy (`C`) is paused. Set this to `true` to show it in the hint and handle the key again. */
+export const COPY = false;
+
 /** The measuring chip: the held key as a `mac` keyboard prints it, or Alt. */
 export const measuringChip = (mac: boolean) => (mac ? '⌥ measuring' : 'Alt measuring');
 
@@ -29,7 +32,7 @@ export function hintParts(state: HintState, mac: boolean): HintPart[] {
       return [key('Click'), text('to select')];
     case 'selection':
       return [
-        key(mac ? '⌥ Option' : 'Alt'), text('measure'), DOT, key('C'), text('copy'), DOT, key('B'), text('children'), DOT, key('I'), text('styles'), DOT, key('S'), text('stacking'),
+        key(mac ? '⌥ Option' : 'Alt'), text('measure'), ...(COPY ? [DOT, key('C'), text('copy')] : []), DOT, key('B'), text('children'), DOT, key('I'), text('styles'), DOT, key('S'), text('stacking'),
         ...(state.climbs ? [DOT, key('Click'), text('again → parent')] : []),
       ];
     case 'blueprint':
