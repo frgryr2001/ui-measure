@@ -456,6 +456,19 @@ describe('paintPair', () => {
     }
   });
 
+  it('T2: a non-modal dialog is not in the top layer, so a fixed z-index of the maximum paints over it', () => {
+    const n = tree([
+      { name: 'dialog', style: { tag: 'dialog', position: 'absolute' } },
+      { name: 'fixed', style: { position: 'fixed', 'z-index': '2147483647' } },
+    ]);
+    const pair = over(n, 'dialog', 'fixed');
+    expect(pair?.top).toBe('b');
+    expect(pair?.a).toBe(n.dialog);
+    expect(pair?.b).toBe(n.fixed);
+    expect(pairVerdict(pair!, 'html')).toBe('on top · z 2147483647 > 0 in html');
+    expect(over(n, 'fixed', 'dialog')?.top).toBe('a');
+  });
+
   it('T6: a popover inside an opacity and transform parent still paints in the top layer, over a fixed z-index of the maximum', () => {
     const n = tree([
       {
