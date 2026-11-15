@@ -208,6 +208,14 @@ describe('leaders (pass 2)', () => {
     expect(shown.map((l) => l.id).sort()).toEqual(['blocker', 'low']);
   });
 
+  it('a `late` label goes after every other label had both passes: a higher value moving away beats a late one next to its target', () => {
+    // a Blueprint child's size (late) on the spot the selection's gap needs for its leader
+    const high = value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }]);
+    const late = { ...label('late', 0.5, { x: 100, y: 140 }), pinned: true, late: true };
+    const { shown } = placeLabels([blocker, { ...high, priority: 1 }, late], VP, new Map());
+    expect(shown.map((l) => l.id).sort()).toEqual(['blocker', 'v']);
+  });
+
   it('back next to its target as soon as the near spot frees up: an away spot is no anchor', () => {
     const v = value([{ at: { x: 100, y: 140 }, from: { x: 100, y: 112 } }]);
     const first = placeLabels([blocker, v], VP, new Map());

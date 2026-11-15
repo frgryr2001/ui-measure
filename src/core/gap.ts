@@ -83,3 +83,11 @@ export function gaps(items: Rect[], main: Axis, wrap: boolean, touch: number): G
   }
   return out;
 }
+
+/** True when gap `g` starts or ends on an edge of `r`, level with it: one of the two boxes it separates. ±0.5px, as a same-size wrapper counts as its child. */
+export function beside(g: Gap, r: Rect): boolean {
+  const on = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  return g.axis === 'x'
+    ? (on(g.x1, r.right) || on(g.x2, r.left)) && g.y1 >= r.top && g.y1 <= r.bottom
+    : (on(g.y1, r.bottom) || on(g.y2, r.top)) && g.x1 >= r.left && g.x1 <= r.right;
+}

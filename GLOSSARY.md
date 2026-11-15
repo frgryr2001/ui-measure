@@ -4,7 +4,7 @@
 The tool's ON state, scoped to one browser tab. Off by default; turning it on or off never affects other tabs.
 
 **Hint**
-The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, styles, children (Blueprint), parent), naming each key as the user's keyboard prints it (`⌥ Option` on a Mac, `Alt` elsewhere). Hidden while measuring. Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer moves, never moving onto a leader.
+The small keycap tooltip that follows the pointer while measure mode is on and shows the next steps for the current state (select, measure, copy, styles, children (Blueprint), parent), naming each key as the user's keyboard prints it (`⌥ Option` on a Mac, `Alt` elsewhere). Hidden while measuring, and once the pointer rests (back on the next move, click or key). Other labels move out of its way; a details value (padding, gap, radius) can't leave its box, so it hides under the hint until the pointer rests, never moving onto a leader.
 
 **Bounds**
 The outer edge of an element's visible box (its border edge, after transforms). Every measurement is taken between bounds, never between padding or content edges.
@@ -52,7 +52,7 @@ What Copy (`C`) writes for the last-selected element as CSS: a selector that fin
 _Avoid_: info, tooltip (that is the Hint), inspector
 
 **Blueprint**
-`B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline and W × H, plus hatched padding, gaps and corner radius. A wrapper whose only child has its bounds counts as one box (with the wrapper's radius when the child has none); depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
+`B` with a selection: the details of the last-selected element's descendants too, each kept descendant with a dashed outline, plus hatched padding, gaps and corner radius. A descendant holding two or more drawn boxes (a row, a list) shows its W × H only when hovered, since its label would sit where its middle child's does; the rest show theirs. A wrapper whose only child has its bounds counts as one box (with the wrapper's radius when the child has none); depth and node count are capped, and what the caps cut is reported as "+N hidden". Only boxes in the viewport are drawn. `B` or `Esc` returns to the selection; hidden while measuring.
 _Avoid_: X-ray (a plain outline of every element on the page), overview
 
 **Leader**

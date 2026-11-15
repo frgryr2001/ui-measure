@@ -21,8 +21,9 @@ export type Away = { at: Point; from?: Point };
  * A label to place: `at` lists the spots it may be centered on, best first. Higher `priority` places first.
  * `pinned`: only those spots, never pushed inside the viewport, so it is hidden rather than placed away from what it describes.
  * `away`: spots it tries after every label had its `at`, in priority order (GLOSSARY "Leader").
+ * `late`: placed only once every other label had both passes, so a value of higher rank may lead away onto its spots.
  */
-export type Label = { id: string; text: string; priority: number; at: Point[]; pinned?: boolean; away?: Away[] };
+export type Label = { id: string; text: string; priority: number; at: Point[]; pinned?: boolean; away?: Away[]; late?: boolean };
 
 /** A dashed line from what a label describes (x1, y1) to the nearest edge of the label (x2, y2). */
 export type Leader = { x1: number; y1: number; x2: number; y2: number };
@@ -65,7 +66,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  * which labels move out of the way of; a label whose near spots are blocked only by them is hidden, not led away,
  * so the moving Hint never sends values onto leaders. `clear`: boxes whose words stay readable (a one-line
  * control). A spot on one is skipped, and the label may still move onto a leader; the Hint and the Styles panel
- * (`taken`) are the only obstacles that hide a value instead.
+ * (`taken`) are the only obstacles that hide a value instead. `late` labels run both passes after all the others.
  */
 export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchors: Anchors, taken: Rect[] = [], clear: Rect[] = []): { shown: (L & { box: Rect; leader?: Leader })[]; anchors: Anchors } {
   // uniform grid of placed boxes and leaders, so each test only looks at nearby ones
@@ -101,8 +102,6 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
   const lo = { x: viewport.left + APART, y: viewport.top + APART };
   const shown: (L & { box: Rect; leader?: Leader })[] = [];
   const next: Anchors = new Map();
-  const later: L[] = [];
-  const sorted = [...labels].sort((a, b) => b.priority - a.priority);
   // overlap, not the 4px labels keep apart: the content box already holds the descenders, and a side padding
   // band is often only a label wide (a 24px band, a 23.2px `24`), so 4px would push its value out of the band
   // in the same grid cells as labels: Blueprint of 400 short boxes has 400 of them
@@ -119,44 +118,49 @@ export function placeLabels<L extends Label>(labels: L[], viewport: Rect, anchor
       inside: (r: Rect) => r.left >= lo.x && r.top >= lo.y && r.left <= hi.x && r.top <= hi.y,
     };
   };
-  for (const l of sorted) {
-    const { box, pushed, inside } = boxer(l);
-    const spots = [...l.at.map(box), ...(l.pinned ? [] : l.at.map(pushed))];
-    const fits = (i: number) => {
+  const place = (group: L[]) => {
+    const later: L[] = [];
+    for (const l of [...group].sort((a, b) => b.priority - a.priority)) {
+      const { box, pushed, inside } = boxer(l);
+      const spots = [...l.at.map(box), ...(l.pinned ? [] : l.at.map(pushed))];
+      const fits = (i: number) => {
+        const r = spots[i];
+        return !!r && inside(r) && !onWords(r) && !blocked(r);
+      };
+      const last = anchors.get(l.id);
+      const i = last !== undefined && fits(last) ? last : spots.findIndex((_, j) => fits(j));
       const r = spots[i];
-      return !!r && inside(r) && !onWords(r) && !blocked(r);
-    };
-    const last = anchors.get(l.id);
-    const i = last !== undefined && fits(last) ? last : spots.findIndex((_, j) => fits(j));
-    const r = spots[i];
-    if (r) {
-      occupy({ r });
-      next.set(l.id, i);
-      shown.push({ ...l, box: r });
-      // a spot on words is lost with or without the Hint, so the Hint isn't what keeps the value from it
-    } else if (l.away?.length && !(taken.length > 0 && spots.some((s) => inside(s) && !onWords(s) && blocked(s) === 'hint'))) later.push(l);
-  }
-  // no anchor for an away spot: next frame the label goes back next to its target if that spot is free
-  for (const l of later) {
-    const { box, inside } = boxer(l);
-    for (const a of l.away ?? []) {
-      const r = box(a.at);
-      const leader = a.from && { x1: a.from.x, y1: a.from.y, x2: clamp(a.from.x, r.left, r.right), y2: clamp(a.from.y, r.top, r.bottom) };
-      if (!inside(r) || onWords(r) || (leader && Math.hypot(leader.x2 - leader.x1, leader.y2 - leader.y1) > MAX_LEADER)) continue;
-      const by = blocked(r);
-      // the Hint covers this spot only: try the next one. A near spot under the Hint never reaches here
-      // (pass 1 keeps the value hidden rather than leading it away), so a later leader can still show it.
-      if (by) continue;
-      if (leader) {
-        const span: Rect = { left: Math.min(leader.x1, leader.x2), top: Math.min(leader.y1, leader.y2), right: Math.max(leader.x1, leader.x2), bottom: Math.max(leader.y1, leader.y2) };
-        if (cells(span).some((k) => grid.get(k)?.some((o) => !o.leader && !o.hint && crosses(leader, o.r)))) continue;
-        occupy({ r: span, leader });
-      }
-      occupy({ r });
-      shown.push({ ...l, box: r, ...(leader && { leader }) });
-      break;
+      if (r) {
+        occupy({ r });
+        next.set(l.id, i);
+        shown.push({ ...l, box: r });
+        // a spot on words is lost with or without the Hint, so the Hint isn't what keeps the value from it
+      } else if (l.away?.length && !(taken.length > 0 && spots.some((s) => inside(s) && !onWords(s) && blocked(s) === 'hint'))) later.push(l);
     }
-  }
+    // no anchor for an away spot: next frame the label goes back next to its target if that spot is free
+    for (const l of later) {
+      const { box, inside } = boxer(l);
+      for (const a of l.away ?? []) {
+        const r = box(a.at);
+        const leader = a.from && { x1: a.from.x, y1: a.from.y, x2: clamp(a.from.x, r.left, r.right), y2: clamp(a.from.y, r.top, r.bottom) };
+        if (!inside(r) || onWords(r) || (leader && Math.hypot(leader.x2 - leader.x1, leader.y2 - leader.y1) > MAX_LEADER)) continue;
+        const by = blocked(r);
+        // the Hint covers this spot only: try the next one. A near spot under the Hint never reaches here
+        // (pass 1 keeps the value hidden rather than leading it away), so a later leader can still show it.
+        if (by) continue;
+        if (leader) {
+          const span: Rect = { left: Math.min(leader.x1, leader.x2), top: Math.min(leader.y1, leader.y2), right: Math.max(leader.x1, leader.x2), bottom: Math.max(leader.y1, leader.y2) };
+          if (cells(span).some((k) => grid.get(k)?.some((o) => !o.leader && !o.hint && crosses(leader, o.r)))) continue;
+          occupy({ r: span, leader });
+        }
+        occupy({ r });
+        shown.push({ ...l, box: r, ...(leader && { leader }) });
+        break;
+      }
+    }
+  };
+  place(labels.filter((l) => !l.late));
+  place(labels.filter((l) => l.late));
   return { shown, anchors: next };
 }
 

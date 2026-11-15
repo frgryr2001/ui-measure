@@ -472,6 +472,7 @@ try {
   await press('Escape', 'Escape', 27);
   await press('Escape', 'Escape', 27);
   console.log(`ok  leaders: #leader-row keeps r 12 and both paddings; #leader-dense ${dense.length} leaders (radius + padding), each ≤ 40px, crossing no label; none hops while the Hint moves`);
+
   await evaluate(page, `document.querySelector('#bp-card').scrollIntoView({ block: 'center' })`);
   // inside the card's top padding: the card itself is the deepest element there
   const cardPadding = await corner('#bp-card', 160, 8);
@@ -677,6 +678,42 @@ try {
   perfOf['nothing selected'] = await perf();
   console.log(`ok  CPU ms per frame while scrolling: ${Object.entries(perfOf).map(([k, v]) => `${k} ${v.cpu} (rAF p95 ${v.p95})`).join(', ')}`);
   for (const [k, v] of Object.entries(perfOf)) assert.ok(+v.cpu < 8 && +v.p95 < 34, `${k}: ${v.cpu} ms CPU per frame, p95 ${v.p95} ms (gate: < 8, < 34)`);
+
+  // crowded details (ticket 25), after the perf runs: in headless Chrome the extra clicks here left the page hidden
+  // (rAF stopped) during the last perf run, at HEAD too; cause unknown: the selection's gaps lead away before Blueprint's child sizes take their spots,
+  // a gap beside the hovered box comes back with it, the Hint steps aside once the pointer rests,
+  // and a box holding two or more drawn boxes shows its W × H only on hover
+  const labelSpots = () => evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label]')]
+    .map((r) => ({ kind: r.dataset.label, text: r.nextElementSibling.textContent, cx: +r.getAttribute('x') + +r.getAttribute('width') / 2 }))`);
+  await evaluate(page, `document.querySelector('#icon-row').scrollIntoView({ block: 'center' })`);
+  const icons = await corner('#icon-row', 0, 20);
+  const leftGap = { x: icons.x + 45, y: icons.y };
+  await select(leftGap); // the first gap: the row itself
+  await pressB();
+  await mouse('mouseMoved', { x: icons.x + 500, y: icons.y - 200 });
+  await poll('#icon-row in Blueprint: both gaps show next to the icons\' sizes', labelSpots, (ls) => ls.filter((l) => l.kind === 'gap' && l.text === '10').length === 2);
+  const leftGapShown = (ls) => ls.some((l) => l.kind === 'gap' && Math.abs(l.cx - leftGap.x) < 2);
+  await mouse('mouseMoved', leftGap);
+  await poll('the pointer in the left gap: its value shows', labelSpots, leftGapShown);
+  await mouse('mouseMoved', { x: icons.x + 20, y: icons.y });
+  await poll('the Hint shows while the pointer moves', hintOf, Boolean);
+  await poll('the pointer resting on the left icon: the Hint steps aside', hintOf, (h) => h === null, 2000);
+  await poll('…and the gap beside the icon shows', labelSpots, leftGapShown);
+  await mouse('mouseMoved', { x: icons.x + 21, y: icons.y });
+  await poll('the Hint is back on the next move', hintOf, Boolean);
+  await press('Escape', 'Escape', 27);
+  await press('Escape', 'Escape', 27);
+  await evaluate(page, `document.querySelector('#tab-bar').scrollIntoView({ block: 'center' })`);
+  const bar = await evaluate(page, `(() => { const r = document.querySelector('#tab-bar').getBoundingClientRect(), m = document.querySelector('#tab-mid').getBoundingClientRect(); return { x: r.left + 300, y: r.bottom - 6, top: r.top, mid: m.left + m.width / 2 }; })()`);
+  await select(bar); // the bar's bottom padding: the bar itself
+  await pressB();
+  await mouse('mouseMoved', { x: bar.x, y: bar.top - 150 });
+  const tabs = await poll('#tab-bar in Blueprint: five tab sizes, none for the list holding them', labelSpots, (ls) => ls.filter((l) => l.text === '128 × 40').length === 5);
+  assert.ok(!tabs.some((l) => l.text.startsWith('640 ×')), `no W × H of the list: ${JSON.stringify(tabs)}`);
+  assert.ok(tabs.filter((l) => l.kind === 'size' && Math.abs(l.cx - bar.mid) < 2).every((l) => l.text === '128 × 40'), `a size centered on the middle tab is the tab's: ${JSON.stringify(tabs)}`);
+  await press('Escape', 'Escape', 27);
+  await press('Escape', 'Escape', 27);
+  console.log('ok  crowded details: #icon-row gaps 10 10 in Blueprint, the left one with the pointer in it and resting on the icon beside it (the Hint steps aside); #tab-bar five 128 × 40, no 640 × 40');
 
   // copy: C writes the last selection's spec; read back through this page, a secure origin
   await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });

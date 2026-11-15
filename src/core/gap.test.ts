@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gapFlow, gaps } from './gap';
+import { beside, gapFlow, gaps } from './gap';
 import { touchLimit } from './measure';
 import type { Rect } from './rect';
 
@@ -120,5 +120,15 @@ describe('gapFlow + gaps (which containers get gaps)', () => {
     expect(gapFlow({ ...style, display: 'inline-flex', flexDirection: 'column-reverse', flexWrap: 'wrap', text: true })).toEqual({ main: 'y', wrap: true });
     expect(gapFlow({ ...style, display: 'flex' })).toEqual({ main: 'x', wrap: false });
     expect(gapFlow({ ...style, display: 'grid' })).toEqual({ main: 'x', wrap: true });
+  });
+});
+
+describe('beside', () => {
+  it('a gap is beside the two boxes it separates, along either axis, and no other', () => {
+    const icons = [box(0, 0, 40, 40), box(50, 0, 40, 40), box(100, 0, 40, 40)];
+    const [left, right] = gaps(icons, 'x', false, T);
+    expect(icons.map((r) => [beside(left!, r), beside(right!, r)])).toEqual([[true, false], [true, true], [false, true]]);
+    const [g] = gaps([box(0, 0, 40, 40), box(0, 50, 40, 40)], 'y', false, T);
+    expect([beside(g!, box(0, 50, 40, 40)), beside(g!, box(60, 50, 40, 40))]).toEqual([true, false]);
   });
 });

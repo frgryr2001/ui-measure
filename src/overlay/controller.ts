@@ -1,6 +1,6 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
 import { blueprintKids, bounds, boxAbove, boxAt, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStyles, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
-import type { Gap } from '../core/gap';
+import { beside, type Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, TEXT_SAFE, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
 import { mid, touchLimit, type Measurement } from '../core/measure';
@@ -27,6 +27,7 @@ const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, hov
 // value has one near spot, in its band, while radius falls back to just outside its corner, or to another corner
 // when all four match (a pill's inside corner spot covers its side padding value). A hovered node's size comes back as
 // the hover size, its other labels get `hoverBoost`, which keeps them above other details and below that size.
+// The rest of Blueprint's labels are `late`: the selection's own values take their leaders first (ticket 25).
 const DETAILS = { rootGap: 1, rootPadding: 0.97, rootRadius: 0.95, size: 0.5, sizeByArea: 0.3, gap: 0.4, padding: 0.35, radius: 0.3, hoverBoost: 1 };
 
 /** Everything the overlay draws for one animation frame. Plain numbers only. */
@@ -61,6 +62,8 @@ export type Frame = {
 };
 
 const TOAST_MS = 1500;
+// the Hint steps aside once the pointer rests this long, so a value under it shows where the user is looking
+const HINT_REST_MS = 800;
 const NOTICE_MS = 6000;
 // share of the way an outline glides per 60 Hz frame: ~95% there in 120 ms
 const GLIDE = 0.35;
@@ -86,6 +89,11 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   onExit: () => void;
 }): { stop: () => void; notify: (text: string) => void } {
   let pointer: { x: number; y: number } | null = null;
+  // last pointer move, click or handled key (performance.now()): the Hint shows until the pointer rests
+  let woke = performance.now();
+  const wake = () => {
+    woke = performance.now();
+  };
   let alt = false;
   const mac = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform);
   // `B`: annotates the last-selected element's subtree until B or Esc; follows the selection
@@ -126,6 +134,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
   window.addEventListener('pointermove', (e) => {
     pointer = { x: e.clientX, y: e.clientY };
     alt = e.altKey; // resync in case a keyup was lost
+    wake();
   }, { ...capture, passive: true });
 
   window.addEventListener('mouseout', (e) => {
@@ -137,6 +146,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (type === 'pointerdown' && e instanceof PointerEvent && e.button === 0) {
+        wake();
         // blocking mousedown also blocks the focus move into this frame, and keys would go to the frame focused before
         window.focus();
         const hit = deepElementAt(e.clientX, e.clientY, host, shadowOf);
@@ -167,6 +177,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       e.preventDefault();
       e.stopImmediatePropagation();
       blueprint = !blueprint;
+      wake();
       return;
     }
     if (e.code === 'KeyI' && selected.length > 0 && isBareKeydown(e)) {
@@ -174,6 +185,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       e.preventDefault();
       e.stopImmediatePropagation();
       styles = !styles;
+      wake();
       return;
     }
     // Copy: the last-selected element's spec as CSS
@@ -182,6 +194,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       if (isTypingInPage(host, shadowOf)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      wake();
       // synchronously inside the keydown: the clipboard needs its user activation
       void copyText(css(readSpec(from))).then((ok) => {
         toast = { text: ok ? 'Copied CSS' : 'Copy failed: clipboard unavailable on this page', ok, until: performance.now() + TOAST_MS };
@@ -191,6 +204,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (e.key === 'Escape' && e.type === 'keydown' && !e.repeat) {
       e.preventDefault();
       e.stopImmediatePropagation();
+      wake();
       // while measuring Styles and the blueprint are hidden, so Esc skips them
       if (styles && !alt) styles = false;
       else if (blueprint && !alt) blueprint = false;
@@ -265,8 +279,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
 
     const labels: (Label & { kind: LabelKind })[] = [];
     // details labels are `pinned`, never pushed into the viewport: next to what they describe, else `away` on a leader, else hidden
-    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away'], pinned = !!away) =>
-      labels.push({ id, text, kind, priority, at: at(text), ...(pinned ? { pinned: true } : {}), away: away?.(text) });
+    const add = (id: string, text: string, kind: LabelKind, priority: number, at: (text: string) => Label['at'], away?: (text: string) => Label['away'], pinned = !!away, late = false) =>
+      labels.push({ id, text, kind, priority, at: at(text), ...(pinned ? { pinned: true } : {}), away: away?.(text), ...(late ? { late: true } : {}) });
     // a toast fades out once its time is up, keeping its spot until gone; C again shows the new one at full.
     // reduced motion fades too: opacity is no movement.
     const toastOpacity = toast ? fadeOut(performance.now() - toast.until) : 1;
@@ -302,14 +316,20 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     const area = width(viewport) * height(viewport);
     // a hovered node's labels come back first, like its hover size (ticket 06)
     const boostOf = (el: Element) => (el === target ? DETAILS.hoverBoost : 0);
+    // a Blueprint descendant's labels wait for every other label's leaders, unless hovered
+    const lateOf = (el: Element, boost: number) => el !== root && boost === 0;
+    // a box holding two or more drawn boxes shows its W × H only on hover: centered, it would sit where its middle child's does
+    const held = new Map<number, number>();
+    for (const k of bp?.nodes ?? []) held.set(k.parent, (held.get(k.parent) ?? 0) + 1);
+    const holders = new Set(bp?.nodes.filter((_, i) => (held.get(i) ?? 0) >= 2).map((k) => k.node));
     for (const { node, boxes, touch } of kept) {
       const id = idOf(node);
       const z = zoomOf([node]);
       const drawn = drawnBoxes(node, boxes);
       const boost = boostOf(node);
       // no leader: led-away child sizes would take every spot the details values need; hovering the box brings its size back, on a leader
-      if (node !== root && node !== target) {
-        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t));
+      if (node !== root && node !== target && !holders.has(node)) {
+        add(`size:${id}`, sizeLabel(boxes.border, z), 'size', DETAILS.size + DETAILS.sizeByArea * Math.min(1, (width(boxes.border) * height(boxes.border)) / area), (t) => sizeSpots(boxes.border, t), undefined, false, true);
       }
       // the number is the real padding; the spot rides the band that is on screen
       const p = drawn.padding;
@@ -325,23 +345,27 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       sides.forEach(([side, value, band], i) => {
         if (value <= touch) return;
         const priority = boost + (node === root ? DETAILS.rootPadding : DETAILS.padding);
-        add(`pad:${id}:${i}`, formatPx(value / z), 'padding', priority, () => [{ x: mid(band.left, band.right), y: mid(band.top, band.bottom) }], (t) => paddingAway(band, drawn.border, side, t));
+        add(`pad:${id}:${i}`, formatPx(value / z), 'padding', priority, () => [{ x: mid(band.left, band.right), y: mid(band.top, band.bottom) }], (t) => paddingAway(band, drawn.border, side, t), true, lateOf(node, boost));
       });
     }
     for (const { el, gaps } of gapsOf) {
       const z = zoomOf([el]);
-      const priority = boostOf(el) + (el === root ? DETAILS.rootGap : DETAILS.gap);
-      gaps.forEach((g, i) => add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', priority, (t) => lineSpots(g, t), (t) => lineAway(g, t)));
+      gaps.forEach((g, i) => {
+        // a gap beside the hovered box comes back with it, as its container's do
+        const boost = hover && beside(g, hover.border) ? DETAILS.hoverBoost : boostOf(el);
+        add(`gap:${idOf(el)}:${i}`, formatPx(g.value / z), 'gap', boost + (el === root ? DETAILS.rootGap : DETAILS.gap), (t) => lineSpots(g, t), (t) => lineAway(g, t), true, lateOf(el, boost));
+      });
     }
     for (const { el, box, radii } of corners) {
-      const priority = boostOf(el) + (el === root ? DETAILS.rootRadius : DETAILS.radius);
-      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away));
+      const boost = boostOf(el);
+      const priority = boost + (el === root ? DETAILS.rootRadius : DETAILS.radius);
+      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away, true, lateOf(el, boost)));
     }
     const one = climbsFrom(target);
     // Esc closes Styles first, so the Hint names that
     const hintState: HintState = styles ? { kind: 'styles' } : blueprint ? { kind: 'blueprint' } : selected.length > 0 ? { kind: 'selection', climbs: !!one && boxAbove(one, host, shadowOf) !== one } : { kind: 'idle' };
     const parts = hintParts(hintState, mac);
-    const hint = pointer && !measuring ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
+    const hint = pointer && !measuring && now - woke < HINT_REST_MS ? { box: placeHint(pointer, hintWidth(parts), HINT_H, viewport), parts } : null;
     // a one-line control's words: labels may sit in its padding, never on the text
     const words = (border: Rect, content: Rect): Rect[] => (height(border) < TEXT_SAFE && width(content) > 0 && height(content) > 0 ? [content] : []);
     const clear = [
