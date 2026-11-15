@@ -199,3 +199,232 @@ export function clippers(chain: StackStyle[]): Clip[] {
 /** True when `inner` runs more than half a px past a side of `outer`: what the ancestor clips is then cut off. */
 export const runsPast = (inner: Rect, outer: Rect) =>
   inner.left < outer.left - 0.5 || inner.top < outer.top - 0.5 || inner.right > outer.right + 0.5 || inner.bottom > outer.bottom + 0.5;
+
+/**
+ * One box in the flat tree. Chains share a node where they meet, so identity is "the same element".
+ * `index` is its place among the flat-tree parent's children (the DOM reader may ignore it and pass `flatBefore`).
+ */
+export type StackNode = {
+  style: StackStyle;
+  /** Computed `order`. 0 when the used value is 0. */
+  order: number;
+  /** Computed `float`. */
+  float: string;
+  index: number;
+  parent: StackNode | null;
+};
+
+export type PairReason = 'z' | 'tree' | 'layer' | 'top-layer' | 'top-layer-tie' | 'descendant' | 'negative';
+
+/** Which of the two boxes paints on top, and the participants that decide it inside `context`. `top` is null when both are in the top layer. */
+export type PaintPair = {
+  top: 'a' | 'b' | null;
+  a: StackNode;
+  b: StackNode;
+  context: StackNode;
+  reason: PairReason;
+};
+
+type FlatBefore = (a: StackNode, b: StackNode) => boolean;
+
+const layoutParent = (n: StackNode): StackNode | null => {
+  let p = n.parent;
+  while (p && p.style.display === 'contents') p = p.parent;
+  return p;
+};
+
+const applies = (n: StackNode) => zApplies(n.style.position, layoutParent(n)?.style.display ?? '');
+
+/** A stacking context. The root is one even though `stackingReasons` leaves it out (it is never drawn). */
+const isContext = (n: StackNode) => n.style.root || stackingReasons(n.style, applies(n)).length > 0;
+
+const stacked = (n: StackNode) => n.style.position !== 'static' || isContext(n);
+
+const inFlexOrGrid = (n: StackNode) => {
+  const parent = layoutParent(n);
+  return !!parent && Z_PARENT.has(parent.style.display);
+};
+
+// floats, inline-blocks and flex / grid items paint their plain descendants with them
+const atomic = (n: StackNode) => n.float !== 'none' || /^inline-(block|flex|grid|table)/.test(n.style.display) || inFlexOrGrid(n);
+
+const zOf = (n: StackNode): number => {
+  if (!applies(n) || n.style['z-index'] === 'auto') return 0;
+  const z = Number.parseInt(n.style['z-index'], 10);
+  return Number.isNaN(z) ? 0 : z;
+};
+
+const chainOf = (n: StackNode): StackNode[] => {
+  const up: StackNode[] = [];
+  for (let p: StackNode | null = n; p; p = p.parent) up.push(p);
+  return up;
+};
+
+// an SVG child paints inside its outermost <svg>; z-index does nothing on the inner boxes
+const asBox = (n: StackNode): StackNode => {
+  if (!n.style.svg) return n;
+  let outer = n;
+  for (let p: StackNode | null = n; p; p = p.parent) if (p.style.tag === 'svg' && !p.style.svg) outer = p;
+  return outer;
+};
+
+/**
+ * What represents `e` in `ctx`'s paint list: the outermost stacking context below `ctx`, else the nearest positioned box,
+ * else the outermost atomic box, else `e`. A top-layer box leaves every ancestor and paints in the root (T6).
+ */
+const participant = (e: StackNode, ctx: StackNode): StackNode => {
+  const up = chainOf(e);
+  const at = up.indexOf(ctx);
+  const below = at < 0 ? up : up.slice(0, at);
+  if (ctx.style.root) {
+    const top = below.find((x) => x.style.topLayer);
+    if (top) return top;
+  }
+  const outer = below.filter((x) => isContext(x) && !x.style.root).at(-1);
+  if (outer) return outer;
+  return below.find((x) => stacked(x)) ?? below.filter((x) => atomic(x)).at(-1) ?? e;
+};
+
+// Appendix E, simplified to the ranks the probe compares (higher paints later)
+const rank = (p: StackNode, ctx: StackNode): number => {
+  if (p.style.topLayer && ctx.style.root) return 9;
+  if (stacked(p)) {
+    const z = zOf(p);
+    if (z < 0) return 1;
+    if (z > 0) return 7;
+    return 6;
+  }
+  if (inFlexOrGrid(p)) return 4;
+  if (p.float !== 'none') return 3;
+  if (p.style.display.startsWith('inline')) return 4;
+  return 2;
+};
+
+// Chrome's OrderLessThan: `order` counts only when this child is the flex / grid item or that item's child
+const near = (child: StackNode, node: StackNode) => child === node || child === layoutParent(node);
+
+/** True when `a` paints before `b` in the flat tree (`flatBefore`), with flex / grid `order` where Chrome uses it. */
+const earlier = (a: StackNode, b: StackNode, flatBefore: FlatBefore): boolean => {
+  const ua = chainOf(a).reverse();
+  const ub = chainOf(b).reverse();
+  let i = 0;
+  while (ua[i] && ua[i] === ub[i]) i++;
+  const ca = ua[i];
+  const cb = ub[i];
+  if (!ca) return true;
+  if (!cb) return false;
+  const parent = ua[i - 1];
+  const flex = !!parent && Z_PARENT.has(parent.style.display) && near(ca, a) && near(cb, b);
+  const orderOf = (x: StackNode) => (flex && x.style.position !== 'absolute' && x.style.position !== 'fixed' ? x.order : 0);
+  const oa = orderOf(ca);
+  const ob = orderOf(cb);
+  return oa !== ob ? oa < ob : flatBefore(ca, cb);
+};
+
+const compareIn = (a: StackNode, b: StackNode, ctx: StackNode, flatBefore: FlatBefore): PaintPair => {
+  const pa = participant(a, ctx);
+  const pb = participant(b, ctx);
+  if (pa === pb) return compareIn(a, b, pa, flatBefore);
+  const ra = rank(pa, ctx);
+  const rb = rank(pb, ctx);
+  let top: PaintPair['top'];
+  let reason: PairReason;
+  if (ra !== rb) {
+    top = ra > rb ? 'a' : 'b';
+    reason = ra === 9 || rb === 9 ? 'top-layer' : 'layer';
+  } else if (ra === 9) {
+    top = null;
+    reason = 'top-layer-tie';
+  } else if (zOf(pa) !== zOf(pb)) {
+    top = zOf(pa) > zOf(pb) ? 'a' : 'b';
+    reason = 'z';
+  } else {
+    // shortcut: compares boxes, so an earlier block's text over a later block's background (research X1) reads as the later block on top; split backgrounds from inline content if that case matters.
+    top = earlier(pb, pa, flatBefore) ? 'a' : 'b';
+    reason = 'tree';
+  }
+  return { top, a: pa, b: pb, context: ctx, reason };
+};
+
+const ancestorPair = (a: StackNode, b: StackNode): PaintPair => {
+  const anc = chainOf(b).includes(a) ? a : b;
+  const desc = anc === a ? b : a;
+  // a descendant paints over its ancestor's background, unless the ancestor is not a context and the descendant sits in a negative-z context below it
+  const ancIsContext = isContext(anc);
+  const ctx = ancIsContext ? anc : (chainOf(anc).slice(1).find((x) => isContext(x)) ?? chainOf(anc).at(-1)!);
+  const pd = ancIsContext ? desc : participant(desc, ctx);
+  const under = !ancIsContext && pd !== anc && stacked(pd) && zOf(pd) < 0;
+  const side = (node: StackNode) => (node === anc ? anc : under ? pd : desc);
+  return {
+    top: (under ? anc : desc) === a ? 'a' : 'b',
+    a: side(a),
+    b: side(b),
+    context: ctx,
+    reason: under ? 'negative' : 'descendant',
+  };
+};
+
+const byIndex: FlatBefore = (a, b) => a.index < b.index;
+
+/**
+ * Which of `a` or `b` paints on top, and the two participants that compete in their nearest common stacking context.
+ * Null when both are the same box (two SVG children collapse to one `<svg>`). `flatBefore` is flat-tree order at a tie;
+ * the default is `index`. Ported from the probed algorithm in docs/stacking-research.md.
+ */
+export function paintPair(a0: StackNode, b0: StackNode, flatBefore: FlatBefore = byIndex): PaintPair | null {
+  const a = asBox(a0);
+  const b = asBox(b0);
+  if (a === b) return null;
+  if (chainOf(a).includes(b) || chainOf(b).includes(a)) return ancestorPair(a, b);
+  const ub = new Set(chainOf(b));
+  const ctx = chainOf(a).find((x) => x !== a && ub.has(x) && isContext(x)) ?? chainOf(a).at(-1)!;
+  return compareIn(a, b, ctx, flatBefore);
+}
+
+/** Draw the pair when the bounds overlap, except a descendant that simply paints over its ancestor. */
+export const pairWorthShowing = (pair: PaintPair, overlap: boolean) => overlap && pair.reason !== 'descendant';
+
+const kind = (n: StackNode): string => {
+  if (n.style.topLayer) return 'top layer';
+  if (stacked(n)) {
+    if (applies(n) && n.style['z-index'] !== 'auto') return `z ${zOf(n)}`;
+    if (n.style.position !== 'static') return 'positioned';
+    return 'stacking context';
+  }
+  if (inFlexOrGrid(n)) return 'flex item';
+  if (n.float !== 'none') return 'float';
+  if (n.style.display.startsWith('inline')) return 'inline';
+  return 'block';
+};
+
+/** The verdict on the winner. `through` is a positioned pseudo that took the hit outside the winner's border box. */
+export function pairVerdict(pair: PaintPair, contextName: string, through?: '::before' | '::after'): string {
+  if (through) return cut(`on top · through ${through}`);
+  if (pair.top === null) return 'both in top layer, last shown wins';
+  if (pair.reason === 'top-layer') return 'on top · top layer';
+  if (pair.reason === 'negative') {
+    const under = pair.top === 'a' ? pair.b : pair.a;
+    return cut(`on top · z ${zOf(under)} under a plain parent`);
+  }
+  const win = pair.top === 'a' ? pair.a : pair.b;
+  const lose = pair.top === 'a' ? pair.b : pair.a;
+  if (stacked(win) && stacked(lose)) {
+    const zw = zOf(win);
+    const zl = zOf(lose);
+    return zw === zl ? cut(`on top · tie z ${zw}, later in tree`) : cut(`on top · z ${zw} > ${zl} in ${contextName}`);
+  }
+  if (rank(win, pair.context) === rank(lose, pair.context)) return cut('on top · later in tree');
+  return cut(`on top · ${kind(win)} over ${kind(lose)} in ${contextName}`);
+}
+
+/** The participant's label, the same shape as the context's: `selector · reasons · z`. */
+export const participantLabel = (selector: string, n: StackNode) => contextLabel(selector, n.style, applies(n));
+
+const pseudoPaints = (p: { content: string; position: string }) => p.content !== 'none' && p.content !== 'normal' && p.position !== 'static';
+
+/** Which positioned pseudo can take a hit outside the element's border box. `::after` wins when both can. */
+export function positionedPseudo(after: { content: string; position: string }, before: { content: string; position: string }): '::before' | '::after' | null {
+  if (pseudoPaints(after)) return '::after';
+  if (pseudoPaints(before)) return '::before';
+  return null;
+}

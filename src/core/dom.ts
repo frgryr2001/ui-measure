@@ -2,7 +2,7 @@ import { classify, keptInChain, radii, same, type Corner, type Corners, type Loo
 import { gapFlow, gaps, type Gap } from './gap';
 import { height, inset, scaleEdges, scaleOf, width, type Edges, type Rect } from './rect';
 import { selectorOf, type Spec, type Step } from './spec';
-import { ANIMATED, STACK_DEFAULTS, STACK_PROPERTIES, clipLabel, clippers, contextLabel, runsPast, selectionLabel, shortSelector, stackingReasons, zApplies, zNoEffect, type StackStyle, type ZNoEffect } from './stacking';
+import { ANIMATED, STACK_DEFAULTS, STACK_PROPERTIES, clipLabel, clippers, contextLabel, paintPair, participantLabel, positionedPseudo, runsPast, selectionLabel, shortSelector, stackingReasons, zApplies, zNoEffect, type PaintPair, type StackNode, type StackStyle, type ZNoEffect } from './stacking';
 import { DEFAULTS, STYLE_PROPERTIES, type Computed } from './styles';
 
 export type Boxes = { margin: Rect; border: Rect; padding: Rect; content: Rect };
@@ -220,6 +220,20 @@ function flatParent(el: Element, shadowOf: ShadowOf): Element | null {
   return parentOf(el);
 }
 
+// a slot's assigned elements, else the shadow root's children, else the element's. The slot itself stays a child of its host.
+function flatChildren(parent: Element, shadowOf: ShadowOf): readonly Element[] {
+  if (parent instanceof HTMLSlotElement) {
+    const assigned = parent.assignedElements();
+    if (assigned.length) return assigned;
+  }
+  return [...(shadowOf(parent) ?? parent).children];
+}
+
+const siblingIndex = (el: Element, shadowOf: ShadowOf) => {
+  const parent = flatParent(el, shadowOf);
+  return parent ? flatChildren(parent, shadowOf).indexOf(el) : 0;
+};
+
 // boxes inside an <svg> (not the outer one) paint in document order: z-index and their transforms don't stack there
 const inSvg = (el: Element) => el instanceof SVGElement && el.ownerSVGElement !== null;
 
@@ -231,8 +245,7 @@ export function readZNoEffect(el: Element, shadowOf: ShadowOf): ZNoEffect {
   return zNoEffect(inSvg(el), zApplies(getComputedStyle(el).position, parent ? getComputedStyle(parent).display : ''));
 }
 
-function stackStyle(el: Element, ignore: Element): StackStyle {
-  const cs = getComputedStyle(el);
+function stackStyle(el: Element, ignore: Element, cs = getComputedStyle(el)): StackStyle {
   const read: StackStyle = { ...STACK_DEFAULTS, tag: el.localName, root: el === document.documentElement, svg: inSvg(el), topLayer: null, opacity: 1, animated: false };
   for (const p of STACK_PROPERTIES) read[p] = cs.getPropertyValue(p);
   // our own host is a top-layer popover too
@@ -283,6 +296,75 @@ export function readStacking(el: Element, ignore: Element, shadowOf: ShadowOf): 
     label: self ? selectionLabel(self, applies(0)) : null,
     context: ctx && ctxStyle && !ctxStyle.root ? { box: bounds(ctx), label: contextLabel(name(ctx), ctxStyle, applies(at)) } : null,
     clip,
+  };
+}
+
+/** The stacking pair of `aEl` (the selection) and `bEl` (the hover target). Null when they are one box. */
+export type StackPair = {
+  pair: PaintPair;
+  /** The participant elements, the ones to outline. */
+  a: Element;
+  b: Element;
+  contextName: string;
+  aLabel: string;
+  bLabel: string;
+  /** A positioned pseudo of each participant that can take a hit outside its border box. */
+  pseudoA: '::before' | '::after' | null;
+  pseudoB: '::before' | '::after' | null;
+};
+
+const readPseudo = (el: Element): '::before' | '::after' | null => {
+  const read = (pseudo: '::before' | '::after') => {
+    const cs = getComputedStyle(el, pseudo);
+    return { content: cs.getPropertyValue('content'), position: cs.getPropertyValue('position') };
+  };
+  return positionedPseudo(read('::after'), read('::before'));
+};
+
+/**
+ * Which of `aEl` and `bEl` paints on top. Each element on the two chains is styled once. Tree order is
+ * `compareDocumentPosition`, and the flat-tree index when the two boxes sit in different trees (a slot).
+ */
+export function readStackPair(aEl: Element, bEl: Element, ignore: Element, shadowOf: ShadowOf): StackPair | null {
+  const cache = new Map<Element, StackNode>();
+  const elOf = new Map<StackNode, Element>();
+  const nodeOf = (el: Element): StackNode => {
+    const hit = cache.get(el);
+    if (hit) return hit;
+    const parentEl = flatParent(el, shadowOf);
+    const parent = parentEl ? nodeOf(parentEl) : null;
+    const cs = getComputedStyle(el);
+    const order = Number.parseInt(cs.getPropertyValue('order'), 10);
+    const node: StackNode = { style: stackStyle(el, ignore, cs), order: Number.isNaN(order) ? 0 : order, float: cs.getPropertyValue('float'), index: 0, parent };
+    cache.set(el, node);
+    elOf.set(node, el);
+    return node;
+  };
+  // no child list unless the two boxes are in different trees: a slotted node against a shadow node
+  const flatBefore = (x: StackNode, y: StackNode) => {
+    const ex = elOf.get(x);
+    const ey = elOf.get(y);
+    if (!ex || !ey) return x.index < y.index;
+    const pos = ex.compareDocumentPosition(ey);
+    if (pos & Node.DOCUMENT_POSITION_DISCONNECTED) return siblingIndex(ex, shadowOf) < siblingIndex(ey, shadowOf);
+    return (pos & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  };
+  const pair = paintPair(nodeOf(aEl), nodeOf(bEl), flatBefore);
+  if (!pair) return null;
+  const a = elOf.get(pair.a);
+  const b = elOf.get(pair.b);
+  const ctx = elOf.get(pair.context);
+  if (!a || !b) return null;
+  const name = (el: Element) => shortSelector(el.localName, el.id, el.classList);
+  return {
+    pair,
+    a,
+    b,
+    contextName: ctx ? name(ctx) : 'html',
+    aLabel: participantLabel(name(a), pair.a),
+    bLabel: participantLabel(name(b), pair.b),
+    pseudoA: readPseudo(a),
+    pseudoB: readPseudo(b),
   };
 }
 

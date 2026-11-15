@@ -736,7 +736,9 @@ try {
         const r = svg.querySelector('[data-stacking="' + part + '"]:not([data-label])');
         return r ? { box: box(r), dash: r.getAttribute('stroke-dasharray') } : null;
       };
-      return { label: label('label'), context: label('context'), clip: label('clip'), contextBox: outline('context'), clipBox: outline('clip') };
+      const labels = (part) => [...svg.querySelectorAll('[data-label][data-stacking="' + part + '"]')].map((r) => r.nextElementSibling.textContent);
+      const boxes = (part) => [...svg.querySelectorAll('[data-stacking="' + part + '"]:not([data-label])')].map(box);
+      return { label: label('label'), context: label('context'), clip: label('clip'), contextBox: outline('context'), clipBox: outline('clip'), participants: labels('participant'), verdict: labels('verdict')[0] ?? null, participantBoxes: boxes('participant') };
     })()`);
   const selectedIs = async (what, selector) => {
     const want = await rectsOf([selector]);
@@ -884,6 +886,59 @@ try {
   await selectedIs('outside Stacking: click again climbs to its parent', '#stack-modal');
   await press('Escape', 'Escape', 27);
   console.log('ok  Stacking: 0 / auto tie, <html> context not drawn, a click elsewhere picks the topmost; z -1 under its parent, click again → below; static z 5 no effect (Styles too); clipped by overflow hidden (dashed); slotted box trapped in a closed root; slotted z 5 applies through a bare <slot>, not under a <div> around it (Styles too); fixed in a z 1 parent; modal under a backdrop: click again → below, down to <html>; climbs outside Stacking');
+
+  // Stacking pair (ticket 27): one selected element, an overlapping hover target — the two boxes that compete, and which paints on top
+  const sameBoxes = (got, want) => got.length === want.length && want.every((b) => got.includes(b));
+  // a participant that is the stacking context keeps that label; it already says `selector · reasons · z`
+  const pairNames = (o) => [...o.participants, ...(o.context && o.contextBox && o.participantBoxes.includes(o.contextBox.box) ? [o.context] : [])];
+  await evaluate(page, `document.querySelector('#stack-trap').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-trap-kid', 8, 8));
+  await pressS();
+  await mouse('mouseMoved', await center('#stack-trap-over'));
+  st = await poll('the z 1 box paints over the trapped z 9999', stackingOf, (o) => o.verdict === 'on top · z 1 > 0 in html' && pairNames(o).includes('div.trap · transform, will-change · z 0') && pairNames(o).includes('div#stack-trap-over · z 1'));
+  assert.ok(sameBoxes(st.participantBoxes, await rectsOf(['#stack-trap .trap', '#stack-trap-over'])), `participants: ${JSON.stringify(st.participantBoxes)}`);
+  await assertLabelsApart('stacking pair of #stack-trap');
+  // the other way: the selection is the one on top
+  await select(await center('#stack-trap-over'));
+  await mouse('mouseMoved', await corner('#stack-trap-kid', 8, 8));
+  await poll('the selection is on top of the trapped box', stackingOf, (o) => o.verdict === 'on top · z 1 > 0 in html' && o.label === 'z 1');
+
+  await evaluate(page, `document.querySelector('#stack-fixed').hidden = false`);
+  await evaluate(page, `document.querySelector('#stack-fixed').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-fixed-kid', 150, 70));
+  await mouse('mouseMoved', await center('#stack-fixed-over'));
+  await poll('fixed z 2 paints over the z 1 parent of the fixed z 9999', stackingOf, (o) => o.verdict === 'on top · z 2 > 1 in html' && pairNames(o).includes('div.holder · z 1') && pairNames(o).includes('div#stack-fixed-over · fixed · z 2'));
+  await evaluate(page, `document.querySelector('#stack-fixed').hidden = true`);
+
+  await evaluate(page, `document.querySelector('#stack-tie').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-tie-a', 10, 10));
+  await mouse('mouseMoved', await corner('#stack-tie-b', 10, 10));
+  await poll('z 0 and z auto tie, the later box on top', stackingOf, (o) => o.verdict === 'on top · tie z 0, later in tree' && pairNames(o).includes('div#stack-tie-a · z 0') && pairNames(o).includes('div#stack-tie-b · z 0'));
+
+  await evaluate(page, `document.querySelector('#stack-modal').scrollIntoView({ block: 'center' })`);
+  const modalAgain = await center('#stack-modal-box');
+  await select(modalAgain);
+  await click(modalAgain);
+  await poll('the backdrop paints over the modal', stackingOf, (o) => o.verdict === 'on top · z 2 > 1 in html' && pairNames(o).includes('div#stack-modal-backdrop · z 2') && pairNames(o).includes('div#stack-modal-box · z 1') && o.label === 'z 1');
+
+  await evaluate(page, `document.querySelector('#stack-static').scrollIntoView({ block: 'center' })`);
+  await mouse('mouseMoved', await corner('#stack-static', 10, 10));
+  await poll('no pair when the boxes do not overlap', stackingOf, (o) => o.verdict === null && o.participants.length === 0);
+
+  await evaluate(page, `document.querySelector('#stack-trap').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-trap .trap', 4, 4));
+  await mouse('mouseMoved', await corner('#stack-trap-kid', 8, 8));
+  await poll('no pair when a child simply paints over its parent', stackingOf, (o) => o.verdict === null);
+
+  await evaluate(page, `document.querySelector('#stack-tie').scrollIntoView({ block: 'center' })`);
+  await select(await corner('#stack-tie-a', 10, 10));
+  await mouse('mouseMoved', await corner('#stack-tie-b', 10, 10));
+  await poll('the tie pair is back, for the per-frame cost', stackingOf, (o) => o.verdict === 'on top · tie z 0, later in tree');
+  const pairPerf = await perf();
+  assert.ok(+pairPerf.cpu < 8 && +pairPerf.p95 < 34, `stacking pair: ${pairPerf.cpu} ms CPU per frame, p95 ${pairPerf.p95} ms (gate: < 8, < 34)`);
+  console.log(`ok  Stacking pair: trap z 1 > 0 (either way), fixed z 2 > 1, tie z 0 later in tree, backdrop z 2 > 1; none when the boxes miss or a child paints over its parent; CPU ${pairPerf.cpu} ms/frame`);
+  await press('Escape', 'Escape', 27);
+  await press('Escape', 'Escape', 27);
 
   // copy: C writes the last selection's spec; read back through this page, a secure origin
   await send('Browser.grantPermissions', { origin: new URL(url).origin, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });

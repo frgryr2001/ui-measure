@@ -1,5 +1,5 @@
 import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
-import { blueprintKids, bounds, boxAbove, boxAt, boxBelow, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStacking, readStyles, readZNoEffect, roundOf, zoomOf, type Boxes, type ShadowOf } from '../core/dom';
+import { blueprintKids, bounds, boxAbove, boxAt, boxBelow, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStacking, readStackPair, readStyles, readZNoEffect, roundOf, zoomOf, type Boxes, type ShadowOf, type StackPair } from '../core/dom';
 import { beside, type Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
 import { LABEL_H, TEXT_SAFE, cornerSpots, labelWidth, lineAway, lineSpots, paddingAway, placeLabels, sizeAway, sizeSpots, type Anchors, type Label, type Leader } from '../core/labels';
@@ -7,6 +7,7 @@ import { mid, touchLimit, type Measurement } from '../core/measure';
 import { fadeOut, followMeasurement, followPoint, glider } from '../core/motion';
 import { formatPx, height, intersect, ring, sizeLabel, union, width, type Rect } from '../core/rect';
 import { css } from '../core/spec';
+import { pairVerdict, pairWorthShowing } from '../core/stacking';
 import { placeStyles, styleRows, stylesSize, type StyleRow } from '../core/styles';
 import { copyText } from './clipboard';
 
@@ -17,14 +18,14 @@ declare global {
 
 /** Picks the label's fill: that role's `label` in theme.ts. */
 export type LabelKind = 'size' | 'measurement' | 'gap' | 'padding' | 'radius' | 'stacking';
-/** Which Stacking part a label belongs to: the selection's own, its stacking context's, the clipping ancestor's. */
-export type StackingPart = 'label' | 'context' | 'clip';
+/** Which Stacking part a label belongs to: the selection's own, its stacking context's, the clipping ancestor's, or a pair's participant and verdict. */
+export type StackingPart = 'label' | 'context' | 'clip' | 'participant' | 'verdict';
 /** `leader`: a details value placed away from what it describes (GLOSSARY "Leader"). `opacity`: under 1 only while the toast fades out. */
 export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: Leader; opacity?: number; stacking?: StackingPart };
 
 // higher places first. The selection size outranks the hover size so it doesn't move while hovering around.
 // Stacking's labels come after the selection's W × H.
-const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, stacking: 2.5, stackingContext: 2.4, stackingClip: 2.3, hoverSize: 2 };
+const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, stacking: 2.5, stackingVerdict: 2.45, stackingContext: 2.4, stackingClip: 2.3, stackingPair: 2.2, hoverSize: 2 };
 // Details sit below every other label (research Phần 05 §5): the selected element's gaps, radius and
 // padding, then Blueprint's child sizes by area, gaps, padding, radius. Padding outranks radius: a padding
 // value has one near spot, in its band, while radius falls back to just outside its corner, or to another corner
@@ -60,8 +61,8 @@ export type Frame = {
   } | null;
   /** The Hint at the pointer; null while measuring or with the pointer outside this frame. */
   hint: PlacedHint | null;
-  /** `S`: the last-selected element's stacking context and the ancestor that clips it, each cut to the viewport (null for none); null when off or measuring. */
-  stacking: { context: Rect | null; clip: Rect | null } | null;
+  /** `S`: the last-selected element's stacking context and the ancestor that clips it, each cut to the viewport (null for none), plus the pair's participants; null when off or measuring. */
+  stacking: { context: Rect | null; clip: Rect | null; participants: Rect[] } | null;
   /** `I`: the last-selected element's Styles, in groups, next to the selection (below, above, beside, else a corner); null when closed or measuring. */
   styles: { box: Rect; groups: StyleRow[][] } | null;
 };
@@ -234,6 +235,13 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     if (document.visibilityState === 'hidden') clearTransient();
   }, { signal: ac.signal });
 
+  // the pair read is the expensive one (up to 1.8 ms): only when the selection or the hover target changes. Outlines are re-read every frame.
+  let paired: { a: Element; b: Element; value: StackPair | null } | null = null;
+  const stackPair = (a: Element, b: Element) => {
+    if (!paired || paired.a !== a || paired.b !== b) paired = { a, b, value: readStackPair(a, b, host, shadowOf) };
+    return paired.value;
+  };
+
   const tick = (now: number) => {
     raf = requestAnimationFrame(tick);
     const ms = now - lastFrame;
@@ -328,6 +336,43 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     }
     if (stack?.context && stackContext) stackLabel('context', stack.context.label, PRIORITY.stackingContext, cornerSpots(stackContext, stack.context.label));
     if (stack?.clip && stackClip) stackLabel('clip', stack.clip.label, PRIORITY.stackingClip, cornerSpots(stackClip, stack.clip.label));
+    // one selected element, a different hover target: the two boxes that compete, and which paints on top
+    let participantBoxes: Rect[] = [];
+    const read = stack && stackOf && target && selected.length === 1 && target !== stackOf ? stackPair(stackOf, target) : null;
+    if (read && stackOf && target && pairWorthShowing(read.pair, intersect(bounds(stackOf), bounds(target)) !== null)) {
+      const visible = (el: Element) => intersect(bounds(el), viewport);
+      const aBox = visible(read.a);
+      const bBox = visible(read.b);
+      // the context label already reads `selector · reasons · z` on that box; a second copy only loses the fight for a spot
+      const namedByContext = (el: Element, text: string) => {
+        const c = stack?.context;
+        if (!c || text !== c.label) return false;
+        const b = bounds(el);
+        return b.left === c.box.left && b.top === c.box.top && b.right === c.box.right && b.bottom === c.box.bottom;
+      };
+      const addPart = (el: Element, text: string, r: Rect | null) => {
+        if (!r || namedByContext(el, text)) return;
+        // below and beside: the verdict keeps the corners, so the name still fits on a small box
+        labels.push({ id: `stack:participant:${idOf(el)}`, text, kind: 'stacking', priority: PRIORITY.stackingPair, at: sizeSpots(r, text), away: sizeAway(r, text), stacking: 'participant' });
+      };
+      addPart(read.a, read.aLabel, aBox);
+      addPart(read.b, read.bLabel, bBox);
+      const winner = read.pair.top === 'a' ? read.a : read.pair.top === 'b' ? read.b : target;
+      const winnerBox = winner === read.a ? aBox : winner === read.b ? bBox : visible(winner);
+      // a hit outside the winner's border box is its positioned pseudo (the only miss on real pages)
+      let through: '::before' | '::after' | undefined;
+      if (read.pair.top && winner === target && pointer) {
+        const r = bounds(winner);
+        const outside = pointer.x < r.left || pointer.y < r.top || pointer.x > r.right || pointer.y > r.bottom;
+        if (outside) {
+          const pseudo = read.pair.top === 'a' ? read.pseudoA : read.pseudoB;
+          if (pseudo) through = pseudo;
+        }
+      }
+      const verdict = pairVerdict(read.pair, read.contextName, through);
+      if (winnerBox) labels.push({ id: `stack:verdict:${idOf(winner)}`, text: verdict, kind: 'stacking', priority: PRIORITY.stackingVerdict, at: cornerSpots(winnerBox, verdict), stacking: 'verdict' });
+      participantBoxes = [aBox, bBox].filter((r) => r !== null);
+    }
     if (bp && root) {
       const r = shownSingle && root === single ? shownSingle.border : bounds(root);
       if (bp.hidden > 0) {
@@ -447,7 +492,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
       } : null,
       hint,
       styles: panel,
-      stacking: stack ? { context: stackContext, clip: stackClip } : null,
+      stacking: stack ? { context: stackContext, clip: stackClip, participants: participantBoxes } : null,
     };
     const key = JSON.stringify(frame);
     if (key !== last) {

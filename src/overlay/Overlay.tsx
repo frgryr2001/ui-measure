@@ -56,7 +56,7 @@ const Outline = ({ part, r, color, strokeWidth, dash }: OutlineProps) => (
   />
 );
 
-const StackingOutline = ({ part, r, dash }: { part: 'context' | 'clip'; r: Rect; dash?: string }) => (
+const StackingOutline = ({ part, r, dash }: { part: 'context' | 'clip' | 'participant'; r: Rect; dash?: string }) => (
   <rect
     x={r.left}
     y={r.top}
@@ -242,6 +242,7 @@ export function Overlay({ frame }: { frame: Frame }) {
         )}
         {stacking?.context && <StackingOutline part="context" r={stacking.context} />}
         {stacking?.clip && <StackingOutline part="clip" r={stacking.clip} dash={theme.stacking.clipDash} />}
+        {stacking?.participants.map((r, i) => <StackingOutline key={i} part="participant" r={r} />)}
         {measurement?.connectors.map((c, i) => <ConnectorLine key={i} c={c} />)}
         {measurement?.segments.map((s, i) => (
           <SegmentLine key={i} part="measurement" s={s} color={theme.measurement.line} strokeWidth={theme.measurement.lineWidth} />

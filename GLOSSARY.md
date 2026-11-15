@@ -67,5 +67,9 @@ _Avoid_: hidden (that is a label with no free spot), covered
 `S` with a selection: whether the last-selected element's z-index applies, the stacking context it competes in (solid outline) and every reason that ancestor is one, and the ancestor that clips it (dashed outline). Each part shows only when it differs from the plain case; nothing for an `<html>` context. Click again goes down (see Selection). `S` or `Esc` returns to the selection; exclusive with Blueprint, shown with Styles, hidden while measuring.
 _Avoid_: inspector, z-index view, 3D view
 
+**Stacking pair**
+While Stacking is on, with one element selected, the hover target whose bounds overlap it. The two boxes that compete in their nearest common stacking context, each outlined, and a verdict on the one that paints on top. Nothing when one is inside the other and the inner one simply paints over it; shown when that inner one paints under (a negative z-index under a plain parent).
+_Avoid_: layer comparison, z-fight
+
 **Leader**
 A dashed line from a details value (padding, gap, corner radius) to the band, gap line or corner it describes, drawn when the value has no free spot next to it and sits a little away instead. A value with no free spot even then is hidden.

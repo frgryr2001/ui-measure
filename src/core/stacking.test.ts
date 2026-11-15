@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STACK_DEFAULTS, clipLabel, clippers, runsPast, contextLabel, selectionLabel, shortSelector, stackingReasons, zApplies, zNoEffect, type StackStyle } from './stacking';
+import { STACK_DEFAULTS, clipLabel, clippers, runsPast, contextLabel, selectionLabel, shortSelector, stackingReasons, paintPair, pairVerdict, pairWorthShowing, positionedPseudo, zApplies, zNoEffect, type StackNode, type StackStyle } from './stacking';
 
 // a bare <div> in Chrome 157, plus overrides
 const of = (over: Partial<StackStyle> = {}): StackStyle => ({ ...STACK_DEFAULTS, tag: 'div', root: false, svg: false, topLayer: null, opacity: 1, animated: false, ...over });
@@ -242,5 +242,349 @@ describe('runsPast', () => {
     expect(runsPast({ left: 10, top: 10, right: 120, bottom: 40 }, box)).toBe(true);
     expect(runsPast({ left: 0, top: -0.4, right: 100.4, bottom: 50 }, box)).toBe(false);
     expect(runsPast({ left: 10, top: 10, right: 90, bottom: 51 }, box)).toBe(true);
+  });
+});
+
+// docs/stacking-research.md → "The pair algorithm". A flat tree: shared parents, child order is the index.
+type Spec = { name: string; style?: Partial<StackStyle>; float?: string; order?: number; kids?: Spec[] };
+const tree = (kids: Spec[]) => {
+  const nodes: Record<string, StackNode> = {};
+  const walk = (spec: Spec, parent: StackNode | null, index: number) => {
+    const node: StackNode = { style: of(spec.style), float: spec.float ?? 'none', order: spec.order ?? 0, index, parent };
+    nodes[spec.name] = node;
+    spec.kids?.forEach((kid, i) => walk(kid, node, i));
+  };
+  walk({ name: 'html', style: { tag: 'html', root: true }, kids }, null, 0);
+  return nodes;
+};
+const over = (n: Record<string, StackNode>, a: string, b: string) => paintPair(n[a]!, n[b]!);
+
+describe('paintPair', () => {
+  it('O2 / O3: an opacity or transform stacking context paints over a later in-flow block', () => {
+    for (const style of [{ opacity: 0.99 }, { transform: 'matrix(1, 0, 0, 1, 0, 0)' }]) {
+      const n = tree([{ name: 'a', style }, { name: 'b' }]);
+      const pair = over(n, 'a', 'b');
+      expect(pair?.top).toBe('a');
+      expect(pair?.a).toBe(n.a);
+      expect(pair?.b).toBe(n.b);
+      expect(pair?.context).toBe(n.html);
+      expect(pairVerdict(pair!, 'html')).toBe('on top · stacking context over block in html');
+    }
+  });
+
+  it('O4: a positioned z auto box paints over a later in-flow block', () => {
+    const n = tree([{ name: 'a', style: { position: 'relative' } }, { name: 'b' }]);
+    const pair = over(n, 'a', 'b');
+    expect(pair?.top).toBe('a');
+    expect(pairVerdict(pair!, 'html')).toBe('on top · positioned over block in html');
+  });
+
+  it('O5 / O6: opacity or z-index 0 ties a later positioned z auto, and the later one wins', () => {
+    for (const style of [{ opacity: 0.99 }, { position: 'relative' as const, 'z-index': '0' }]) {
+      const n = tree([{ name: 'a', style }, { name: 'b', style: { position: 'relative' } }]);
+      const pair = over(n, 'a', 'b');
+      expect(pair?.top).toBe('b');
+      expect(pairVerdict(pair!, 'html')).toBe('on top · tie z 0, later in tree');
+    }
+  });
+
+  it('O7: a float paints over an in-flow block, including an earlier float over a later block', () => {
+    const n = tree([{ name: 'float', float: 'left' }, { name: 'block' }]);
+    const pair = over(n, 'float', 'block');
+    expect(pair?.top).toBe('a');
+    expect(pairVerdict(pair!, 'html')).toBe('on top · float over block in html');
+  });
+
+  it('O8 / O9: a z -1 child goes under a plain parent, and over a parent that is a stacking context', () => {
+    const plain = tree([{ name: 'parent', kids: [{ name: 'child', style: { position: 'relative', 'z-index': '-1' } }] }]);
+    const under = over(plain, 'parent', 'child');
+    expect(under?.top).toBe('a');
+    expect(under?.a).toBe(plain.parent);
+    expect(under?.b).toBe(plain.child);
+    expect(under?.reason).toBe('negative');
+    expect(pairVerdict(under!, 'html')).toBe('on top · z -1 under a plain parent');
+    expect(pairWorthShowing(under!, true)).toBe(true);
+    // the other way around: the parent is still the one on top
+    expect(over(plain, 'child', 'parent')?.top).toBe('b');
+
+    const trapped = tree([{ name: 'parent', style: { opacity: 0.5 }, kids: [{ name: 'child', style: { position: 'relative', 'z-index': '-1' } }] }]);
+    const above = over(trapped, 'child', 'parent');
+    expect(above?.top).toBe('a');
+    expect(above?.reason).toBe('descendant');
+    expect(pairWorthShowing(above!, true)).toBe(false);
+  });
+
+  it('O10: a fixed z 9999 inside a z 1 parent loses to a z 2 sibling of that parent', () => {
+    const n = tree([
+      { name: 'parent', style: { position: 'relative', 'z-index': '1' }, kids: [{ name: 'fixed', style: { position: 'fixed', 'z-index': '9999' } }] },
+      { name: 'sib', style: { position: 'relative', 'z-index': '2' } },
+    ]);
+    const pair = over(n, 'fixed', 'sib');
+    expect(pair?.top).toBe('b');
+    expect(pair?.a).toBe(n.parent);
+    expect(pair?.b).toBe(n.sib);
+    expect(pairVerdict(pair!, 'html')).toBe('on top · z 2 > 1 in html');
+    expect(over(n, 'sib', 'fixed')?.top).toBe('a');
+  });
+
+  it('O11–O14: flex and grid order paints the higher order on top, relative or static', () => {
+    for (const display of ['flex', 'grid']) {
+      for (const position of ['relative', 'static'] as const) {
+        const n = tree([
+          {
+            name: 'box',
+            style: { display },
+            kids: [
+              { name: 'a', order: 2, style: position === 'static' ? {} : { position } },
+              { name: 'b', order: 1, style: position === 'static' ? {} : { position } },
+            ],
+          },
+        ]);
+        expect(over(n, 'a', 'b')?.top, `${display} ${position}`).toBe('a');
+      }
+    }
+  });
+
+  it('flex order applies to a positioned child of the item, and Chrome ignores it on a great-grandchild (O15) and on an absolute item', () => {
+    const child = tree([
+      {
+        name: 'flex',
+        style: { display: 'flex' },
+        kids: [
+          { name: 'itemA', order: 2, kids: [{ name: 'a', style: { position: 'relative' } }] },
+          { name: 'itemB', order: 1, kids: [{ name: 'b', style: { position: 'relative' } }] },
+        ],
+      },
+    ]);
+    expect(over(child, 'a', 'b')?.top).toBe('a');
+
+    const deep = tree([
+      {
+        name: 'flex',
+        style: { display: 'flex' },
+        kids: [
+          { name: 'itemA', order: 2, kids: [{ name: 'wrapA', kids: [{ name: 'a', style: { position: 'relative' } }] }] },
+          { name: 'itemB', order: 1, kids: [{ name: 'wrapB', kids: [{ name: 'b', style: { position: 'relative' } }] }] },
+        ],
+      },
+    ]);
+    expect(over(deep, 'a', 'b')?.top).toBe('b');
+
+    const abs = tree([
+      {
+        name: 'flex',
+        style: { display: 'flex' },
+        kids: [
+          { name: 'a', order: 2, style: { position: 'absolute' } },
+          { name: 'b', order: 1, style: { position: 'absolute' } },
+        ],
+      },
+    ]);
+    expect(over(abs, 'a', 'b')?.top).toBe('b');
+  });
+
+  it('shadow c1 / c2: the same z-index, and the later flat-tree sibling wins', () => {
+    const lightLater = tree([
+      {
+        name: 'host',
+        kids: [
+          { name: 'shadow', style: { position: 'relative', 'z-index': '1' } },
+          { name: 'slot', style: { display: 'contents', tag: 'slot' }, kids: [{ name: 'light', style: { position: 'relative', 'z-index': '1' } }] },
+        ],
+      },
+    ]);
+    expect(over(lightLater, 'light', 'shadow')?.top).toBe('a');
+    expect(pairVerdict(over(lightLater, 'light', 'shadow')!, 'html')).toBe('on top · tie z 1, later in tree');
+
+    const shadowLater = tree([
+      {
+        name: 'host',
+        kids: [
+          { name: 'slot', style: { display: 'contents', tag: 'slot' }, kids: [{ name: 'light', style: { position: 'relative', 'z-index': '1' } }] },
+          { name: 'shadow', style: { position: 'relative', 'z-index': '1' } },
+        ],
+      },
+    ]);
+    expect(over(shadowLater, 'light', 'shadow')?.top).toBe('b');
+  });
+
+  it('O18: a slotted z 9999 trapped by a transformed div loses to the z 1 sibling outside', () => {
+    const n = tree([
+      {
+        name: 'stage',
+        style: { position: 'relative' },
+        kids: [
+          {
+            name: 'host',
+            kids: [
+              {
+                name: 'trap',
+                style: { transform: 'matrix(1, 0, 0, 1, 0, 0)' },
+                kids: [{ name: 'slot', style: { display: 'contents', tag: 'slot' }, kids: [{ name: 'slotted', style: { position: 'relative', 'z-index': '9999' } }] }],
+              },
+            ],
+          },
+          { name: 'over', style: { position: 'absolute', 'z-index': '1' } },
+        ],
+      },
+    ]);
+    const pair = over(n, 'slotted', 'over');
+    expect(pair?.top).toBe('b');
+    expect(pair?.a).toBe(n.trap);
+    expect(pair?.b).toBe(n.over);
+    expect(pairVerdict(pair!, 'html')).toBe('on top · z 1 > 0 in html');
+  });
+
+  it('O19: iframe content stays inside the iframe element, so an outer z 1 paints over it', () => {
+    const n = tree([
+      { name: 'frame', style: { tag: 'iframe', display: 'inline' } },
+      { name: 'over', style: { position: 'relative', 'z-index': '1' } },
+    ]);
+    expect(over(n, 'frame', 'over')?.top).toBe('b');
+  });
+
+  it('T1 / T3 / X4: a top-layer box paints over a fixed z-index of the maximum', () => {
+    for (const topLayer of ['dialog', 'popover', 'fullscreen'] as const) {
+      const n = tree([
+        { name: 'fixed', style: { position: 'fixed', 'z-index': '2147483647' } },
+        { name: 'top', style: { topLayer, position: 'fixed' } },
+      ]);
+      const pair = over(n, 'top', 'fixed');
+      expect(pair?.top, topLayer).toBe('a');
+      expect(pair?.a).toBe(n.top);
+      expect(pairVerdict(pair!, 'html')).toBe('on top · top layer');
+    }
+  });
+
+  it('T6: a popover inside an opacity and transform parent still paints in the top layer, over a fixed z-index of the maximum', () => {
+    const n = tree([
+      {
+        name: 'trap',
+        style: { opacity: 0.5, transform: 'matrix(1, 0, 0, 1, 0, 0)', position: 'relative', 'z-index': '-5' },
+        kids: [{ name: 'pop', style: { topLayer: 'popover', position: 'fixed' } }],
+      },
+      { name: 'fixed', style: { position: 'fixed', 'z-index': '2147483647' } },
+    ]);
+    const pair = over(n, 'pop', 'fixed');
+    expect(pair?.top).toBe('a');
+    expect(pair?.a).toBe(n.pop);
+    expect(pairVerdict(pair!, 'html')).toBe('on top · top layer');
+  });
+
+  it('T4 / T5: two top-layer boxes, and which is on top is not in the DOM', () => {
+    const n = tree([
+      { name: 'p1', style: { topLayer: 'popover', position: 'fixed' } },
+      { name: 'p2', style: { topLayer: 'popover', position: 'fixed' } },
+    ]);
+    const pair = over(n, 'p1', 'p2');
+    expect(pair?.top).toBeNull();
+    expect(pair?.reason).toBe('top-layer-tie');
+    expect(pairVerdict(pair!, 'html')).toBe('both in top layer, last shown wins');
+    expect(pairWorthShowing(pair!, true)).toBe(true);
+  });
+
+  it('atomic c1 / c2: a block inside a float or an inline-block paints with it, over a later block', () => {
+    const floated = tree([{ name: 'float', float: 'left', kids: [{ name: 'inner' }] }, { name: 'later' }]);
+    const byFloat = over(floated, 'inner', 'later');
+    expect(byFloat?.top).toBe('a');
+    expect(byFloat?.a).toBe(floated.float);
+
+    const ib = tree([{ name: 'ib', style: { display: 'inline-block' }, kids: [{ name: 'inner' }] }, { name: 'later' }]);
+    const byIb = over(ib, 'inner', 'later');
+    expect(byIb?.top).toBe('a');
+    expect(byIb?.a).toBe(ib.ib);
+  });
+
+  it('a positioned box inside a float joins the outer context, not the float', () => {
+    const n = tree([
+      { name: 'float', float: 'left', kids: [{ name: 'abs', style: { position: 'absolute', 'z-index': '1' } }] },
+      { name: 'over', style: { position: 'relative', 'z-index': '2' } },
+    ]);
+    const pair = over(n, 'abs', 'over');
+    expect(pair?.a).toBe(n.abs);
+    expect(pair?.top).toBe('b');
+  });
+
+  it('atomic c3 / c4: a flex item and an inline-block share a pass, so the later one wins', () => {
+    const laterIb = tree([{ name: 'row', style: { display: 'flex' }, kids: [{ name: 'item' }] }, { name: 'ib', style: { display: 'inline-block' } }]);
+    expect(over(laterIb, 'item', 'ib')?.top).toBe('b');
+    expect(pairVerdict(over(laterIb, 'item', 'ib')!, 'html')).toBe('on top · later in tree');
+
+    const laterItem = tree([{ name: 'ib', style: { display: 'inline-block' } }, { name: 'row', style: { display: 'flex' }, kids: [{ name: 'item' }] }]);
+    expect(over(laterItem, 'ib', 'item')?.top).toBe('b');
+  });
+
+  it('X1: a later in-flow block wins, though the earlier block\'s text would paint over its background', () => {
+    const n = tree([{ name: 'a' }, { name: 'b' }]);
+    expect(over(n, 'a', 'b')?.top).toBe('b');
+    expect(pairVerdict(over(n, 'a', 'b')!, 'html')).toBe('on top · later in tree');
+  });
+
+  it('a static z-index does nothing, so a later block paints over it', () => {
+    const n = tree([{ name: 'a', style: { 'z-index': '5' } }, { name: 'b' }]);
+    expect(over(n, 'a', 'b')?.top).toBe('b');
+  });
+
+  it('two blocks inside one positioned box are compared there, and the later one wins', () => {
+    const n = tree([{ name: 'rel', style: { position: 'relative' }, kids: [{ name: 'a' }, { name: 'b' }] }]);
+    const pair = over(n, 'a', 'b');
+    expect(pair?.top).toBe('b');
+    expect(pair?.context).toBe(n.rel);
+  });
+
+  it('a z-index under display: contents still applies when the layout parent is flex', () => {
+    const n = tree([
+      {
+        name: 'flex',
+        style: { display: 'flex' },
+        kids: [
+          { name: 'slot', style: { display: 'contents', tag: 'slot' }, kids: [{ name: 'item', style: { 'z-index': '5' } }] },
+          { name: 'sib' },
+        ],
+      },
+    ]);
+    expect(over(n, 'item', 'sib')?.top).toBe('a');
+  });
+
+  it('two SVG children are one box, and an inner z-index does not escape the svg', () => {
+    const same = tree([{ name: 'svg', style: { tag: 'svg' }, kids: [{ name: 'r1', style: { tag: 'rect', svg: true } }, { name: 'r2', style: { tag: 'rect', svg: true } }] }]);
+    expect(paintPair(same.r1!, same.r2!)).toBeNull();
+
+    const n = tree([
+      { name: 'svg', style: { tag: 'svg' }, kids: [{ name: 'rect', style: { tag: 'rect', svg: true, position: 'relative', 'z-index': '9999' } }] },
+      { name: 'over', style: { position: 'relative', 'z-index': '1' } },
+    ]);
+    const pair = over(n, 'rect', 'over');
+    expect(pair?.top).toBe('b');
+    expect(pair?.a).toBe(n.svg);
+  });
+
+  it('the same box is not a pair', () => {
+    const n = tree([{ name: 'a' }]);
+    expect(paintPair(n.a!, n.a!)).toBeNull();
+  });
+
+  it('shows a pair only when the bounds overlap, and not when a child simply paints over its parent', () => {
+    const n = tree([{ name: 'a', style: { opacity: 0.99 } }, { name: 'b' }]);
+    const pair = over(n, 'a', 'b')!;
+    expect(pairWorthShowing(pair, true)).toBe(true);
+    expect(pairWorthShowing(pair, false)).toBe(false);
+
+    const nested = tree([{ name: 'parent', kids: [{ name: 'child' }] }]);
+    const trivial = over(nested, 'parent', 'child')!;
+    expect(trivial.reason).toBe('descendant');
+    expect(pairWorthShowing(trivial, true)).toBe(false);
+  });
+
+  it('a hit outside the box names the positioned pseudo that took it, ::after before ::before', () => {
+    const n = tree([{ name: 'a', style: { opacity: 0.99 } }, { name: 'b' }]);
+    const pair = over(n, 'a', 'b')!;
+    expect(pairVerdict(pair, 'html', '::after')).toBe('on top · through ::after');
+    const positioned = { content: '""', position: 'absolute' };
+    const absent = { content: 'none', position: 'static' };
+    expect(positionedPseudo(positioned, absent)).toBe('::after');
+    expect(positionedPseudo(absent, positioned)).toBe('::before');
+    expect(positionedPseudo(absent, absent)).toBeNull();
+    expect(positionedPseudo({ content: 'none', position: 'absolute' }, absent)).toBeNull();
   });
 });
