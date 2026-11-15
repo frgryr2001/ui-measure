@@ -45,7 +45,34 @@ export function readBoxes(el: Element): Boxes {
   };
 }
 
-/** Deepest element at a viewport point, walking into shadow roots. */
+const noPaint = (color: string) => color === 'transparent' || color === 'rgba(0, 0, 0, 0)';
+
+/**
+ * A background drawn on the canvas, behind every box: the root's, or the body's while the root's is
+ * transparent. It is not paint of that element, so a z-index below 0 still shows on top of it.
+ */
+const canvasBackground = (el: Element) => {
+  if (el === document.documentElement) return true;
+  if (el !== document.body) return false;
+  const root = getComputedStyle(document.documentElement);
+  return noPaint(root.backgroundColor) && root.backgroundImage === 'none';
+};
+
+/**
+ * Whether `el` paints something a click means: its own background, border, shadow, text or replaced content.
+ * A clear wrapper does not, so the box you see through it (a z-index below 0) can be the one selected.
+ */
+const paintsOwnBox = (el: Element) => {
+  const cs = getComputedStyle(el);
+  const background = !canvasBackground(el) && (!noPaint(cs.backgroundColor) || cs.backgroundImage !== 'none');
+  const border = ['top', 'right', 'bottom', 'left'].some((side) => cs.getPropertyValue(`border-${side}-width`) !== '0px');
+  const outline = cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px';
+  const text = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && /\S/.test(n.textContent ?? ''));
+  const replaced = el instanceof HTMLImageElement || el instanceof HTMLVideoElement || el instanceof HTMLCanvasElement || el instanceof HTMLIFrameElement || el instanceof SVGElement;
+  return background || border || outline || cs.boxShadow !== 'none' || text || replaced;
+};
+
+/** Deepest element at a viewport point, walking into shadow roots. A box that paints nothing does not hide the one you see through it. */
 export function deepElementAt(x: number, y: number, ignore: Element, shadowOf: ShadowOf): Element | null {
   let el = document.elementFromPoint(x, y);
   for (let root = el && shadowOf(el); root; root = el && shadowOf(el)) {
@@ -53,7 +80,10 @@ export function deepElementAt(x: number, y: number, ignore: Element, shadowOf: S
     if (!inner || inner === el) break;
     el = inner;
   }
-  return el === ignore ? null : el;
+  if (!el || el === ignore) return null;
+  if (paintsOwnBox(el)) return el;
+  // shortcut: a ::before / ::after that paints, and the element itself does not, is still skipped
+  return deepElementsAt(x, y, ignore, shadowOf).find((hit) => paintsOwnBox(hit)) ?? el;
 }
 
 /** Parent element, stepping out of a shadow root to its host. */
@@ -146,8 +176,9 @@ function deepElementsAt(x: number, y: number, ignore: Element, shadowOf: ShadowO
 
 // shortcut: elementsFromPoint skips pointer-events: none and inert content, so those can't be reached; read the paint order instead if pages need them.
 /**
- * Where clicking the selected `el` again in Stacking goes: the box of the next element under it at (x, y), past its same-size
- * wrappers; `el` itself at the bottom (`<html>`). Null when nothing at that point is `el`, where a click selects the topmost box.
+ * Where clicking the selected `el` again in Stacking goes: the next box under it at (x, y) that paints, past its same-size
+ * wrappers and past clear boxes (so one click reaches a z-index below 0 under its parent). `<html>` is the bottom.
+ * Null when nothing at that point is `el`, where a click selects the topmost box.
  */
 export function boxBelow(el: Element, x: number, y: number, ignore: Element, shadowOf: ShadowOf): Element | null {
   const stack = deepElementsAt(x, y, ignore, shadowOf);
@@ -158,6 +189,8 @@ export function boxBelow(el: Element, x: number, y: number, ignore: Element, sha
   for (let j = i + 1; j < stack.length; j++) {
     const e = stack[j];
     if (!e || wrappers.has(e)) continue;
+    // a clear ancestor is not a stop: the pink z -1 box is what the next click is for. <html> stays the floor.
+    if (e !== document.documentElement && !paintsOwnBox(e)) continue;
     const box = boxAt(e, ignore, shadowOf);
     if (box === el) continue;
     // same-size wrappers with something else painted between them (a z -1 box between <body> and <html>) are not

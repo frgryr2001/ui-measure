@@ -803,26 +803,23 @@ try {
   await select(underParent);
   await selectedIs('the click lands on the parent, over its z -1 child', '#stack-neg');
   await mouse('mouseMoved', underParent);
-  await poll('the Hint offers a click below', hintOf, (h) => h?.text === `${STACKING_HINT} · Click again → below`);
+  await poll('the Hint offers the box under it', hintOf, (h) => h?.text === `${STACKING_HINT} · Click again → the box under it`);
   assert.ok(!(await labelTexts()).includes('16'), 'Stacking hides the padding values');
-  // it paints under every in-flow block of <html>'s context, so clicks go down past them (the section, main, body) to reach it
-  const kid = JSON.stringify(await rectsOf(['#stack-neg-kid']));
-  let downs = 0;
-  // the outline glides to each box: compare once it stops
-  const selectionSettled = async () => {
-    for (let before = ''; ; await sleep(50)) {
-      const now = JSON.stringify((await outlines()).selected);
-      if (now === before) return now;
-      before = now;
-    }
-  };
-  while (downs < 6 && (await selectionSettled()) !== kid) {
-    await click(underParent);
-    downs++;
-  }
-  await selectedIs('click again → down past the page\'s blocks to the z -1 child', '#stack-neg-kid');
-  assert.ok(downs > 1, `the z -1 child is under the page's blocks, not right under its parent: ${downs} clicks`);
+  // the part that sticks out is the pink box itself: hovering it says the blue box is on top because the pink one sits behind it
+  const stickingOut = await evaluate(page, `(() => { const parent = document.querySelector('#stack-neg').getBoundingClientRect(); const kid = document.querySelector('#stack-neg-kid').getBoundingClientRect(); return { x: kid.right - 8, y: kid.top + kid.height / 2, outside: kid.right - 8 > parent.right }; })()`);
+  assert.equal(stickingOut.outside, true, 'the pink box must stick out of its parent');
+  await mouse('mouseMoved', stickingOut);
+  await poll('the label says the blue box is on top because the pink one sits behind it', stackingOf, (o) => o.verdict === 'on top · z -1 is behind this box');
+  await mouse('mouseMoved', underParent);
+  // clear boxes between the parent and the z -1 child are not stops: one click reaches the pink box
+  await click(underParent);
+  await selectedIs('one click again → the pink box under the parent', '#stack-neg-kid');
   await poll('z -1, in <html>', stackingOf, (o) => o.label === 'z -1' && o.contextBox === null);
+  // outside Stacking, a click on that same pink selects it directly
+  await pressS();
+  await select(stickingOut);
+  await selectedIs('a click on the pink that sticks out selects it', '#stack-neg-kid');
+  await pressS();
 
   // a static box: z-index does nothing, in Stacking and in Styles
   await evaluate(page, `document.querySelector('#stack-static').scrollIntoView({ block: 'center' })`);
@@ -885,7 +882,7 @@ try {
   await click(modal);
   await selectedIs('outside Stacking: click again climbs to its parent', '#stack-modal');
   await press('Escape', 'Escape', 27);
-  console.log('ok  Stacking: 0 / auto tie, <html> context not drawn, a click elsewhere picks the topmost; z -1 under its parent, click again → below; static z 5 no effect (Styles too); clipped by overflow hidden (dashed); slotted box trapped in a closed root; slotted z 5 applies through a bare <slot>, not under a <div> around it (Styles too); fixed in a z 1 parent; modal under a backdrop: click again → below, down to <html>; climbs outside Stacking');
+  console.log('ok  Stacking: 0 / auto tie, <html> context not drawn, a click elsewhere picks the topmost; z -1: one click from its parent, and a click on the part that sticks out; static z 5 no effect (Styles too); clipped by overflow hidden (dashed); slotted box trapped in a closed root; slotted z 5 applies through a bare <slot>, not under a <div> around it (Styles too); fixed in a z 1 parent; modal under a backdrop: click again → below, down to <html>; climbs outside Stacking');
 
   // Stacking pair (ticket 27): one selected element, an overlapping hover target — the two boxes that compete, and which paints on top
   const sameBoxes = (got, want) => got.length === want.length && want.every((b) => got.includes(b));

@@ -10,6 +10,7 @@
     header { position: sticky; top: 0; z-index: 10; padding: 12px 24px; background: #111827; color: #fff; }
     main { padding: 24px; display: grid; gap: 32px; }
     h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    .note { margin: 0 0 12px; max-width: 68ch; font-size: 14px; line-height: 1.5; color: #334155; }
     .tile { background: #c7d2fe; border-radius: 8px; }
     .row { display: flex; gap: 24px; align-items: flex-start; }
     .stack > * + * { margin-top: 16px; }
@@ -235,7 +236,10 @@
     </section>
 
     <section>
-      <h2>Stacking: select a box, press S · trapped z 9999 under z 1 (div.trap · transform, will-change · z 0) · 0 / auto tie (the later wins) · z -1 under its plain parent (click the parent again → below) · static z 5 (no effect) · clipped by overflow hidden · modal under a backdrop (click again → below) · slotted z 9999 trapped in a closed root · slotted z 5 in a flex host: applies through a bare slot, not inside a div around it · fixed z 9999 in a z 1 parent, under a z 2 sibling</h2>
+      <h2>Stacking</h2>
+      <p class="note">Select a box, then press S. The label says why that box is in front.</p>
+      <p class="note"><b>Pink box.</b> Its z-index is −1, so it paints behind the blue box. Click the pink where it sticks out — that selects the pink box. Where the blue covers it, click the blue box, press S, then click again. That click selects the pink box underneath. The label on the blue box says it is on top, because the pink one sits behind it.</p>
+      <p class="note">The other boxes: the pink “z 9999” stays under the yellow “z 1” because the blue wrapper traps it. Where “z 0” overlaps “z auto”, the later box is on top. “static, z-index 5” does nothing. The wide pink strip is cut off by the box around it. The white card sits under the dark layer — click the dark layer, press S, then click again for the card. A slotted box can be trapped the same way, and a fixed box stays under a sibling of its parent (use the button to show those).</p>
       <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
         <div id="stack-trap" style="position:relative;width:300px;height:100px">
           <div class="trap" style="transform:translateX(0);will-change:transform;width:200px;padding:10px;background:#e0e7ff">
@@ -248,7 +252,7 @@
           <div id="stack-tie-b" style="position:absolute;left:60px;top:24px;width:120px;height:60px;background:#fbcfe8">z auto, later: on top</div>
         </div>
         <div>
-          <div id="stack-neg" style="width:220px;padding:16px;background:#e0e7ff">plain parent<div id="stack-neg-kid" style="position:relative;z-index:-1;left:60px;width:200px;height:40px;background:#f9a8d4">z -1</div></div>
+          <div id="stack-neg" style="width:220px;padding:16px;background:#e0e7ff">Blue box<div id="stack-neg-kid" style="position:relative;z-index:-1;left:60px;width:200px;height:40px;background:#f9a8d4;display:flex;align-items:center;justify-content:flex-end;padding-right:8px">Pink</div></div>
         </div>
         <div>
           <div id="stack-static" style="z-index:5;width:220px;padding:8px;background:#e0e7ff">static, z-index 5</div>

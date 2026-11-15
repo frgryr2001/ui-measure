@@ -16,7 +16,7 @@ The unit of every number the tool shows: the px you write in CSS. Browser zoom n
 The box a click would select at the pointer while measure mode is on (see Selection).
 
 **Selection**
-The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper. Elements sharing its bounds, each the only child of the next, are one box, kept as Blueprint keeps it: the inner one with padding or border (else a rounded wrapper over a plain child), showing a wrapper's corner radius when it has none of its own. `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up, past its same-size wrappers, so a container its children cover is still reachable; in Stacking it selects the next box *below* it at that point instead, so a box under another (a modal under its backdrop) is reachable. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
+The elements the user picked. Clicking picks the deepest box under the pointer, not its wrapper. A box that paints nothing does not hide the one you can see through it. Elements sharing its bounds, each the only child of the next, are one box, kept as Blueprint keeps it: the inner one with padding or border (else a rounded wrapper over a plain child), showing a wrapper's corner radius when it has none of its own. `Shift`+click adds or removes one element. Clicking the one selected element again selects the next box up, past its same-size wrappers, so a container its children cover is still reachable; in Stacking it selects the next box under it at that point instead, skipping boxes that paint nothing, so a box under another (a modal under its backdrop, a negative z-index behind its parent) is one click away. Each frame (iframe) keeps its own selection; measuring between frames is not supported.
 
 **Details**
 The numbers of the one selected element, shown on select with no key: W × H, padding, corner radius and, for a container, its gaps. Margins are drawn as a band without numbers (a distance to a neighbour is a measurement). Not shown for a multi-selection or while measuring; a hover target shows only its outline, W × H and bands.
@@ -68,7 +68,7 @@ _Avoid_: hidden (that is a label with no free spot), covered
 _Avoid_: inspector, z-index view, 3D view
 
 **Stacking pair**
-While Stacking is on, with one element selected, the hover target whose bounds overlap it. The two boxes that compete in their nearest common stacking context, each outlined, and a verdict on the one that paints on top. Nothing when one is inside the other and the inner one simply paints over it; shown when that inner one paints under (a negative z-index under a plain parent).
+While Stacking is on, with one element selected, the hover target whose bounds overlap it. The two boxes that compete in their nearest common stacking context, each outlined, and a verdict on the one that paints on top. Nothing when one is inside the other and the inner one simply paints over it; shown when that inner one paints behind it (a negative z-index). The verdict then says the outer box is on top because that z-index sits behind it.
 _Avoid_: layer comparison, z-fight
 
 **Leader**

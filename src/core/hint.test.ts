@@ -27,7 +27,7 @@ describe('hintParts', () => {
 
   it('Stacking: S or Esc to exit, I styles; below only where a click would go down', () => {
     expect(read(hintParts({ kind: 'stacking', below: false }, false))).toBe('[S] / [Esc] to exit · [I] styles');
-    expect(read(hintParts({ kind: 'stacking', below: true }, false))).toBe('[S] / [Esc] to exit · [I] styles · [Click] again → below');
+    expect(read(hintParts({ kind: 'stacking', below: true }, false))).toBe('[S] / [Esc] to exit · [I] styles · [Click] again → the box under it');
   });
 
   it('Blueprint: B or Esc to exit, I styles', () => {

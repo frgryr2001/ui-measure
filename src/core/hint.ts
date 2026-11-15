@@ -35,7 +35,7 @@ export function hintParts(state: HintState, mac: boolean): HintPart[] {
     case 'blueprint':
       return [key('B'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles')];
     case 'stacking':
-      return [key('S'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles'), ...(state.below ? [DOT, key('Click'), text('again → below')] : [])];
+      return [key('S'), text('/'), key('Esc'), text('to exit'), DOT, key('I'), text('styles'), ...(state.below ? [DOT, key('Click'), text('again → the box under it')] : [])];
     case 'styles':
       return [key('I'), text('/'), key('Esc'), text('to close')];
     default: {

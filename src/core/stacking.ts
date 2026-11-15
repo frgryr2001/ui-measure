@@ -404,7 +404,7 @@ export function pairVerdict(pair: PaintPair, contextName: string, through?: '::b
   if (pair.reason === 'top-layer') return 'on top · top layer';
   if (pair.reason === 'negative') {
     const under = pair.top === 'a' ? pair.b : pair.a;
-    return cut(`on top · z ${zOf(under)} under a plain parent`);
+    return cut(`on top · z ${zOf(under)} is behind this box`);
   }
   const win = pair.top === 'a' ? pair.a : pair.b;
   const lose = pair.top === 'a' ? pair.b : pair.a;

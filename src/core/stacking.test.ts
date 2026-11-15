@@ -302,7 +302,7 @@ describe('paintPair', () => {
     expect(under?.a).toBe(plain.parent);
     expect(under?.b).toBe(plain.child);
     expect(under?.reason).toBe('negative');
-    expect(pairVerdict(under!, 'html')).toBe('on top · z -1 under a plain parent');
+    expect(pairVerdict(under!, 'html')).toBe('on top · z -1 is behind this box');
     expect(pairWorthShowing(under!, true)).toBe(true);
     // the other way around: the parent is still the one on top
     expect(over(plain, 'child', 'parent')?.top).toBe('b');
