@@ -61,9 +61,10 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 
 const profile = mkdtempSync(join(tmpdir(), 'uim-e2e-'));
+// headless treats an idle window as occluded: the page goes hidden and rAF stops, so a hover glide never arrives
 const chrome = spawn(
   findChrome(),
-  [`--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--headless=new', '--host-resolver-rules=MAP uim.test 127.0.0.1', '--no-first-run', '--no-default-browser-check', 'about:blank'],
+  [`--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--headless=new', '--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--host-resolver-rules=MAP uim.test 127.0.0.1', '--no-first-run', '--no-default-browser-check', 'about:blank'],
   { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] },
 );
 
@@ -1085,6 +1086,32 @@ try {
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll('[data-label="measurement"] + text')].map((t) => t.textContent)`);
   const hoverOutlines = () =>
     evaluate(page, `[...document.querySelector('ui-measure-root').shadowRoot.querySelectorAll(${HOVER_OUTLINE})].map((r) => ['x', 'y', 'width', 'height'].map((a) => Math.round(+r.getAttribute(a))).join(','))`);
+
+  // an input with no background or border still draws its value: it is the hover target, not the card behind it
+  await evaluate(page, `document.querySelector('#clear-input').scrollIntoView({ block: 'center' })`);
+  await mouse('mouseMoved', await center('#clear-input'));
+  const [clearInputRect] = await rectsOf(['#clear-input']);
+  await poll('hover outline is the clear input', hoverOutlines, (o) => o.includes(clearInputRect));
+  await mouse('mouseMoved', await center('#ph-input'));
+  const [phRect] = await rectsOf(['#ph-input']);
+  await poll('hover outline is the placeholder input', hoverOutlines, (o) => o.includes(phRect));
+  console.log('ok  a clear input (no background, no border) is the hover target, not the card behind it');
+
+  // the navy pill is not the element's own background: a ::before, or a layer that ignores the pointer
+  await evaluate(page, `document.querySelector('#today-tab').scrollIntoView({ block: 'center' })`);
+  const [todayRect] = await rectsOf(['#today-tab']);
+  await mouse('mouseMoved', await corner('#today-tab', 8, 20));
+  await poll('Today padding: the tab, not the bar', hoverOutlines, (o) => o.includes(todayRect));
+  await mouse('mouseMoved', await center('#today-tab span'));
+  await poll('Today word: the tab, not the word', hoverOutlines, (o) => o.includes(todayRect));
+  await evaluate(page, `document.querySelector('#seg').scrollIntoView({ block: 'center' })`);
+  const [thumbRect] = await rectsOf(['#seg-thumb']);
+  await mouse('mouseMoved', await corner('#seg-today', 8, 20));
+  await poll('sliding pill padding: the pill, not the switch', hoverOutlines, (o) => o.includes(thumbRect));
+  await mouse('mouseMoved', await center('#seg-today span'));
+  await poll('sliding pill word: the pill, not the word', hoverOutlines, (o) => o.includes(thumbRect));
+  console.log('ok  Today: a ::before fill and a pointer-events:none pill are the hover target');
+
   await evaluate(page, `document.querySelector('#zoomed').scrollIntoView({ block: 'center' })`);
   const zoomTile = '#zoomed > .tile';
   await mouse('mouseMoved', await center(zoomTile));
@@ -1111,9 +1138,12 @@ try {
   await mouse('mouseMoved', await corner('#zoomed', 250, 80));
   await poll('blueprint of #zoom-card in CSS px', blueprint, (o) => ['10', '20', 'r 12'].every((t) => o.labels.includes(t)));
   await pressB();
-  await pressC();
-  text = await poll('CSS of #zoom-card', clipboard, (t) => t.startsWith('/* div */\n#zoom-card {'));
-  assert.match(text, /^  width: 144px;\n  height: 44px;\n  box-sizing: border-box;\n  padding: 10px 20px;\n  border: 2px solid [^;]+;\n  border-radius: 12px;\n}$/m, `CSS of #zoom-card:\n${text}`);
+  // with the other Copy checks: `text` there is block-scoped, and readText needs the grant above
+  if (COPY) {
+    await pressC();
+    const zoomCss = await poll('CSS of #zoom-card', clipboard, (t) => t.startsWith('/* div */\n#zoom-card {'));
+    assert.match(zoomCss, /^  width: 144px;\n  height: 44px;\n  box-sizing: border-box;\n  padding: 10px 20px;\n  border: 2px solid [^;]+;\n  border-radius: 12px;\n}$/m, `CSS of #zoom-card:\n${zoomCss}`);
+  }
   console.log('ok  zoom 1.5: sizes, spacing, gap, blueprint padding / radius and Copy in CSS px; outline and bands on the rendered box');
 
   // browser zoom is not CSS zoom: labels keep the same CSS px (story 13)

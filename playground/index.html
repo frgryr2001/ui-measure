@@ -20,6 +20,16 @@
     .abs { position: absolute; }
     .scroller { height: 160px; overflow: auto; border: 1px solid #cbd5e1; background: #fff; }
     .scroller > div { height: 600px; padding: 40px; }
+    .underline { position: relative; display: inline-flex; }
+    .underline::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; border-bottom: 1px solid rgba(0, 0, 0, .42); }
+    .underline input { width: 200px; padding: 4px 0 5px; border: 0; background: none; outline: 0; font: inherit; }
+    #today-bar { display: flex; gap: 16px; align-items: center; background: #fff; padding: 8px; }
+    #today-tab { position: relative; z-index: 0; background: transparent; border: 0; color: #fff; padding: 12px 36px; font: inherit; }
+    #today-tab::before { content: ""; position: absolute; inset: 0; background: #243044; border-radius: 8px; z-index: -1; }
+    #seg { position: relative; display: inline-flex; margin-top: 16px; background: #fff; }
+    #seg-thumb { position: absolute; top: 0; bottom: 0; left: 0; width: 140px; background: #243044; border-radius: 8px; pointer-events: none; }
+    #seg-today, #seg-hist { position: relative; width: 140px; background: transparent; border: 0; font: inherit; padding: 12px 0; }
+    #seg-today { color: #fff; }
   </style>
 </head>
 <body>
@@ -48,6 +58,24 @@
         <div class="inner">Inner box, padding 8, margin 12 0</div>
         <button type="button" onclick="this.textContent = 'Click leaked through!'">Button: text must not change while ON</button>
         <input placeholder="Focus me, then press Alt / Esc" style="margin-left:8px" />
+      </div>
+    </section>
+
+    <section>
+      <h2>Clear input: background none, border 0, its underline on the wrapper's ::before (MUI, Material) · hover outlines the input, not the card</h2>
+      <div class="card"><div class="underline"><input id="clear-input" value="17:42" /></div><div class="underline"><input id="ph-input" placeholder="hh:mm" /></div></div>
+    </section>
+
+    <section>
+      <h2>Today: the navy fill is a ::before, or a pointer-events:none pill. Hovering the word or the padding outlines that control, not the bar</h2>
+      <div id="today-bar">
+        <button id="today-tab" type="button"><span>Today</span></button>
+        <button type="button">History</button>
+      </div>
+      <div id="seg">
+        <div id="seg-thumb"></div>
+        <button id="seg-today" type="button"><span>Today</span></button>
+        <button id="seg-hist" type="button">History</button>
       </div>
     </section>
 

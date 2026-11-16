@@ -58,18 +58,116 @@ const canvasBackground = (el: Element) => {
   return noPaint(root.backgroundColor) && root.backgroundImage === 'none';
 };
 
+const painted = (cs: CSSStyleDeclaration, canvas: boolean) => {
+  const background = !canvas && (!noPaint(cs.backgroundColor) || cs.backgroundImage !== 'none');
+  const border = ['top', 'right', 'bottom', 'left'].some((side) => cs.getPropertyValue(`border-${side}-width`) !== '0px');
+  const outline = cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px';
+  return background || border || outline || cs.boxShadow !== 'none';
+};
+
+// a text field's value is not a DOM text node, and a date/time widget still draws when the value is empty
+const WIDGET = new Set(['checkbox', 'radio', 'range', 'color', 'file', 'image', 'button', 'submit', 'reset', 'date', 'time', 'datetime-local', 'month', 'week']);
+const fieldPaints = (el: Element, cs: CSSStyleDeclaration) => {
+  if (el instanceof HTMLInputElement) {
+    if (el.type === 'hidden') return false;
+    if (el.value.trim() !== '' || el.placeholder.trim() !== '') return true;
+    return WIDGET.has(el.type) && cs.getPropertyValue('appearance') !== 'none';
+  }
+  if (el instanceof HTMLTextAreaElement) return el.value.trim() !== '' || el.placeholder.trim() !== '';
+  if (el instanceof HTMLSelectElement) return cs.getPropertyValue('appearance') !== 'none' || [...el.selectedOptions].some((o) => o.text.trim() !== '');
+  return false;
+};
+
+const hasText = (el: Element) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && /\S/.test(n.textContent ?? ''));
+
+// content:none means no box; "" still generates one, so a border or a fill on it counts
+const pseudoPaints = (el: Element) =>
+  (['::before', '::after'] as const).some((pseudo) => {
+    const cs = getComputedStyle(el, pseudo);
+    if (cs.content === 'none' || cs.content === 'normal') return false;
+    return painted(cs, false) || (cs.content !== '""' && cs.content !== "''");
+  });
+
+const replaced = (el: Element) =>
+  el instanceof HTMLImageElement || el instanceof HTMLVideoElement || el instanceof HTMLCanvasElement || el instanceof HTMLIFrameElement || el instanceof SVGElement;
+
 /**
- * Whether `el` paints something a click means: its own background, border, shadow, text or replaced content.
- * A clear wrapper does not, so the box you see through it (a z-index below 0) can be the one selected.
+ * Whether `el` paints something a click means: its own background, border, shadow, text, a form field's
+ * value, a ::before / ::after, or replaced content. A clear wrapper does not, so the box you see through
+ * it (a z-index below 0) can be the one selected.
  */
 const paintsOwnBox = (el: Element) => {
   const cs = getComputedStyle(el);
-  const background = !canvasBackground(el) && (!noPaint(cs.backgroundColor) || cs.backgroundImage !== 'none');
-  const border = ['top', 'right', 'bottom', 'left'].some((side) => cs.getPropertyValue(`border-${side}-width`) !== '0px');
-  const outline = cs.outlineStyle !== 'none' && cs.outlineWidth !== '0px';
-  const text = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && /\S/.test(n.textContent ?? ''));
-  const replaced = el instanceof HTMLImageElement || el instanceof HTMLVideoElement || el instanceof HTMLCanvasElement || el instanceof HTMLIFrameElement || el instanceof SVGElement;
-  return background || border || outline || cs.boxShadow !== 'none' || text || replaced;
+  return painted(cs, canvasBackground(el)) || hasText(el) || fieldPaints(el, cs) || replaced(el) || pseudoPaints(el);
+};
+
+// fill, as opposed to words: a background, border, shadow or pseudo. The words of a control are not a box of their own.
+const chromePaint = (el: Element) => {
+  const cs = getComputedStyle(el);
+  return painted(cs, canvasBackground(el)) || fieldPaints(el, cs) || replaced(el) || pseudoPaints(el);
+};
+
+const isControl = (el: Element) =>
+  el instanceof HTMLButtonElement || el instanceof HTMLAnchorElement || el instanceof HTMLLabelElement || el.tagName === 'SUMMARY' || /^(tab|button|link|menuitem)$/.test(el.getAttribute('role') ?? '');
+
+const rounded = (el: Element) => getComputedStyle(el).getPropertyValue('border-radius') !== '0px';
+
+// the label is the parent's only painted child, so a rounded chip and its word are one box
+const onlyLabel = (parent: Element, label: Element) => [...parent.children].every((c) => c === label || !paintsOwnBox(c));
+
+const within = (inner: Element, outer: Element) => {
+  const i = inner.getBoundingClientRect();
+  const o = outer.getBoundingClientRect();
+  return i.left >= o.left - 1 && i.top >= o.top - 1 && i.right <= o.right + 1 && i.bottom <= o.bottom + 1 && i.width > 0 && i.height > 0;
+};
+
+const areaOf = (el: Element) => {
+  const r = el.getBoundingClientRect();
+  return r.width * r.height;
+};
+
+/** Parent element, stepping out of a shadow root to its host. */
+export const parentOf = (el: Element): Element | null =>
+  el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
+
+// shortcut: elementsFromPoint skips pointer-events:none, so a sliding pill drawn behind a clear control is invisible to it.
+// Only the hit's children and each ancestor's children are checked, not the whole page.
+const missedPaint = (from: Element, x: number, y: number, ignore: Element): Element | null => {
+  let best: Element | null = null;
+  let bestArea = Infinity;
+  const hit = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+  };
+  const consider = (sib: Element) => {
+    if (sib === from || sib === ignore || sib.contains(from)) return;
+    const cs = getComputedStyle(sib);
+    if (cs.pointerEvents !== 'none' || cs.visibility !== 'visible' || cs.display === 'none' || cs.opacity === '0') return;
+    if (!hit(sib) || !paintsOwnBox(sib)) return;
+    const area = areaOf(sib);
+    if (area < bestArea) [best, bestArea] = [sib, area];
+  };
+  for (let p: Element | null = from; p && p !== ignore; p = parentOf(p)) {
+    for (const sib of p.children) consider(sib);
+  }
+  return best;
+};
+
+/** The control a bare text label belongs to: the button, link or tab, or a one-word rounded chip. A pill drawn with pointer-events:none stands in for a control that paints nothing itself. */
+const labelTarget = (el: Element, x: number, y: number, ignore: Element): Element | null => {
+  if (!hasText(el) || chromePaint(el)) return null;
+  const cs = getComputedStyle(el);
+  if (cs.getPropertyValue('padding') !== '0px' || cs.getPropertyValue('border-radius') !== '0px') return null;
+  for (let p = parentOf(el); p && p !== ignore; p = parentOf(p)) {
+    if (isControl(p)) {
+      if (chromePaint(p)) return p;
+      const behind = missedPaint(el, x, y, ignore);
+      return behind && within(behind, p) ? behind : p;
+    }
+    if (chromePaint(p) && rounded(p) && onlyLabel(p, el)) return p;
+    if (paintsOwnBox(p)) return null;
+  }
+  return null;
 };
 
 /** Deepest element at a viewport point, walking into shadow roots. A box that paints nothing does not hide the one you see through it. */
@@ -81,14 +179,14 @@ export function deepElementAt(x: number, y: number, ignore: Element, shadowOf: S
     el = inner;
   }
   if (!el || el === ignore) return null;
+  const label = paintsOwnBox(el) ? labelTarget(el, x, y, ignore) : null;
+  if (label) return label;
   if (paintsOwnBox(el)) return el;
-  // shortcut: a ::before / ::after that paints, and the element itself does not, is still skipped
-  return deepElementsAt(x, y, ignore, shadowOf).find((hit) => paintsOwnBox(hit)) ?? el;
+  const behind = missedPaint(el, x, y, ignore);
+  const under = deepElementsAt(x, y, ignore, shadowOf).find((hit) => paintsOwnBox(hit));
+  if (behind && within(behind, el) && (!under || areaOf(behind) < areaOf(under))) return behind;
+  return under ?? el;
 }
-
-/** Parent element, stepping out of a shadow root to its host. */
-export const parentOf = (el: Element): Element | null =>
-  el.parentElement ?? (el.parentNode instanceof ShadowRoot ? el.parentNode.host : null);
 
 // shortcut: follows the DOM, not the flat tree, so the gaps of `<slot>`ed and `display:contents` children
 // are not drawn; walk assignedElements() / grandchildren if web-component pages need it.
