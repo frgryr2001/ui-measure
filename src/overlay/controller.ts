@@ -1,4 +1,4 @@
-import { collect, radiusLabels, rounded, type Corners } from '../core/blueprint';
+import { collect, fitRadii, radiusLabels, rounded, type Corners } from '../core/blueprint';
 import { blueprintKids, bounds, boxAbove, boxAt, boxBelow, deepElementAt, isTypingInPage, lookAt, readBoxes, readGaps, readRadii, readSpec, readStacking, readStackPair, readStyles, readZNoEffect, roundOf, zoomOf, type Boxes, type ShadowOf, type StackPair } from '../core/dom';
 import { beside, type Gap } from '../core/gap';
 import { HINT_H, hintParts, hintWidth, measuringChip, placeHint, type HintState, type PlacedHint } from '../core/hint';
@@ -29,8 +29,9 @@ export type PlacedLabel = { text: string; kind: LabelKind; box: Rect; leader?: L
 const PRIORITY = { toast: 7, chip: 6, measure: 5, hidden: 3.5, selection: 3, stacking: 2.5, stackingVerdict: 2.45, stackingContext: 2.4, stackingClip: 2.3, stackingPair: 2.2, hoverSize: 2 };
 // Details sit below every other label (research Phần 05 §5): the selected element's gaps, radius and
 // padding, then Blueprint's child sizes by area, gaps, padding, radius. Padding outranks radius: a padding
-// value has one near spot, in its band, while radius falls back to just outside its corner, or to another corner
-// when all four match (a pill's inside corner spot covers its side padding value). A hovered node's size comes back as
+// value has one near spot, in its band, while a descendant's radius falls back to just outside its corner, or to
+// another corner when all four match (a pill's inside corner spot covers its side padding value). The selection's
+// own radius sits in the fillet when the corner can hold it, otherwise just outside that corner. A hovered node's size comes back as
 // the hover size, its other labels get `hoverBoost`, which keeps them above other details and below that size.
 // The rest of Blueprint's labels are `late`: the selection's own values take their leaders first (ticket 25).
 const DETAILS = { rootGap: 1, rootPadding: 0.97, rootRadius: 0.95, size: 0.5, sizeByArea: 0.3, gap: 0.4, padding: 0.35, radius: 0.3, hoverBoost: 1 };
@@ -40,8 +41,8 @@ export type Frame = {
   hover: Boxes | null;
   /** Viewport px at or under which the hover target's bands are touching and not drawn (`touchLimit`). */
   hoverTouch: number;
-  /** Bounds of each selected element. */
-  selected: Rect[];
+  /** Bounds of each selected element, and the corner radii its outline follows (viewport px). */
+  selected: { box: Rect; radii: Corners }[];
   /** Union of `selected`: what measurements are taken from. */
   selection: Rect | null;
   /** Alt held, with a selection. */
@@ -429,7 +430,7 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     for (const { el, box, radii } of corners) {
       const boost = boostOf(el);
       const priority = boost + (el === root ? DETAILS.rootRadius : DETAILS.radius);
-      radiusLabels(box, radii, zoomOf([el])).forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away, true, lateOf(el, boost)));
+      radiusLabels(box, radii, zoomOf([el]), el === root ? 'fillet' : 'inset').forEach((l, i) => add(`r:${idOf(el)}:${i}`, l.text, 'radius', priority, () => l.at, () => l.away, true, lateOf(el, boost)));
     }
     const one = climbsFrom(target);
     const hintShown = !!pointer && !measuring && now - woke < HINT_REST_MS;
@@ -474,10 +475,17 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
     // a gliding label sweeps across others: keep the spots from before, or they'd stay where it pushed them
     if (!glideHover.moving && !glideSelection.moving) anchors = placed.anchors;
 
+    const outlineFor = (el: Element, box: Rect, from: Rect) => ({ box, radii: fitRadii(readRadii(roundOf(el, host, shadowOf), from), box) });
     const frame: Frame = {
       hover: shownHover,
       hoverTouch: touchLimit(dpr, target ? zoomOf([target]) : 1),
-      selected: selected.length === 1 && shownSel ? [shownSel] : selectedRects,
+      selected:
+        selected.length === 1 && shownSel && single
+          ? [outlineFor(single, shownSel, singleBoxes?.border ?? shownSel)]
+          : selected.map((el) => {
+              const box = bounds(el);
+              return outlineFor(el, box, box);
+            }),
       selection: shownSel,
       measuring,
       measurement,
@@ -489,7 +497,8 @@ export function startController({ host, shadowOf, onFrame, onExit }: {
           const b = drawnBoxes(k.node, k.boxes);
           return ring(b.padding, b.content, k.touch);
         }),
-        corners: corners.filter((c) => c.radii.some(rounded)).map(({ box, radii }) => ({ box, radii })),
+        // the root's curve is its selection outline; descendants keep their own arcs
+        corners: corners.filter((c) => c.el !== root && c.radii.some(rounded)).map(({ box, radii }) => ({ box, radii })),
       } : null,
       hint,
       styles: panel,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPS, classify, collect, keptInChain, radii, radiusLabels, type Corners, type Look } from './blueprint';
+import { CAPS, classify, collect, keptInChain, radii, radiusLabels, roundedOutline, type Corners, type Look } from './blueprint';
 import type { Rect } from './rect';
 
 describe('radii', () => {
@@ -185,6 +185,34 @@ describe('radiusLabels', () => {
 
   it('no rounded corner: no label', () => {
     expect(texts([[0, 0], [0, 0], [0, 0], [0.9, 4]])).toEqual([]);
+  });
+
+  it('selection: a 16px corner sits just outside, a 40px corner sits in the fillet', () => {
+    const tall: Rect = { left: 0, top: 0, right: 360, bottom: 133 };
+    const small = radiusLabels(tall, [[16, 16], [16, 16], [16, 16], [16, 16]], 1, 'fillet');
+    expect(small[0]?.text).toBe('r 16');
+    expect(small[0]?.at[0]?.y).toBeLessThan(tall.top);
+    const large = radiusLabels(tall, [[40, 40], [40, 40], [40, 40], [40, 40]], 1, 'fillet');
+    const spot = large[0]?.at[0];
+    expect(spot && spot.x > 0 && spot.x < 40 && spot.y > 0 && spot.y < 40).toBe(true);
+  });
+
+  it('selection: a short pill stays outside, and only a corner that differs gets its own label', () => {
+    const pill: Rect = { left: 0, top: 0, right: 80, bottom: 32 };
+    const [label] = radiusLabels(pill, [[16, 16], [16, 16], [16, 16], [16, 16]], 1, 'fillet');
+    expect(label?.at.every((p) => p.y < pill.top || p.y > pill.bottom)).toBe(true);
+    const mixed = radiusLabels({ left: 0, top: 0, right: 300, bottom: 160 }, [[16, 16], [40, 40], [0, 0], [8, 8]], 1, 'fillet');
+    expect(mixed.map((l) => l.text)).toEqual(['r 16', 'r 40', 'r 8']);
+    expect(mixed[0]?.at[0]?.y).toBeLessThan(0);
+    expect(mixed[1]?.at[0]?.y).toBeGreaterThan(0);
+  });
+});
+
+describe('roundedOutline', () => {
+  it('squares a corner under 1px and arcs the others', () => {
+    expect(roundedOutline({ left: 0, top: 0, right: 100, bottom: 60 }, [[10, 10], [0, 0], [8, 4], [0, 0]])).toBe(
+      'M10 0H100L100 0V56A8 4 0 0 1 92 60H0L0 60V10A10 10 0 0 1 10 0Z',
+    );
   });
 });
 

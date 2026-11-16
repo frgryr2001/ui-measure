@@ -36,18 +36,24 @@ export const rounded = ([x, y]: Corner) => x >= 1 && y >= 1;
 
 const radiusText = ([x, y]: Corner) => `r ${x === y ? formatPx(x) : `${formatPx(x)}/${formatPx(y)}`}`;
 
+/** Where a radius label sits. `inset` is Blueprint (into the box). `fillet` is the selected element: in the corner only when the fillet can hold the label, otherwise just outside it. */
+export type RadiusPlace = 'inset' | 'fillet';
+// an 18px label needs a fillet at least this deep, or it covers the content instead of sitting in the curve
+const FILLET_MIN = LABEL_H + 12;
+
 /**
  * Radius values of box `b`: one label when all four corners match, else one per rounded corner, in
  * CSS px under CSS `zoom`. The near spot is on the corner's 45° line, 0.3 r + 6 px into the box
  * (research Phần 05 §4.3), only when the box is tall enough to keep a line of text clear (`TEXT_SAFE`)
  * and the whole label fits in that corner's half. On a button or a chip the corner is the words, so
  * the value goes straight to a leader. On a short box that spot also covers a side padding value,
- * which outranks the radius. `away` (pass 2, on a leader from the arc's midpoint):
+ * which outranks the radius. `fillet` (the selection) uses that inside spot only when both semi-axes
+ * are at least FILLET_MIN; otherwise the near spot is just above or below the corner. `away` (pass 2, on a leader from the arc's midpoint):
  * just above / below the corner, then along the 45° line, inward when the label fits in the box,
  * then outward at each AWAY distance. The shared label tries the top-left corner first, then the
  * other three.
  */
-export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: string; at: { x: number; y: number }[]; away: Away[] }[] {
+export function radiusLabels(b: Rect, corners: Corners, zoom = 1, place: RadiusPlace = 'inset'): { text: string; at: { x: number; y: number }[]; away: Away[] }[] {
   const [first] = corners;
   const equal = corners.every(([x, y]) => x === first[0] && y === first[1]);
   // corner points and their inward direction, in Corners order
@@ -85,8 +91,36 @@ export function radiusLabels(b: Rect, corners: Corners, zoom = 1): { text: strin
         return { at: { x: corner.x + sign * sx * w, y: corner.y + sign * sy * (LABEL_H / 2) }, from };
       });
     const fitsInside = ({ at: p }: Away) => fits(p);
-    return [{ text, at: inside, away: [...outside, ...along(AWAY[0]).filter(fitsInside), ...AWAY.flatMap((d) => along(-d))] }];
+    const away = [...outside, ...along(AWAY[0]).filter(fitsInside), ...AWAY.flatMap((d) => along(-d))];
+    // 0.62 r puts the label's center in the curve once the fillet is at least FILLET_MIN
+    const fillet =
+      place === 'fillet' && b.bottom - b.top >= TEXT_SAFE && c[0] >= FILLET_MIN && c[1] >= FILLET_MIN
+        ? ds
+            .map(([cx, cy, sx, sy]) => ({ x: cx + sx * c[0] * 0.62, y: cy + sy * c[1] * 0.62, sx }))
+            .filter((p) => fits(p) && (p.sx > 0 ? p.x + w <= midX : p.x - w >= midX))
+            .map(({ x, y }) => ({ x, y }))
+        : [];
+    const at = place === 'fillet' ? (fillet.length > 0 ? fillet : outside.map((a) => a.at)) : inside;
+    return [{ text, at, away }];
   });
+}
+
+/** `corners` reclamped so adjacent corners fit inside `b`. */
+export function fitRadii(corners: Corners, b: Rect): Corners {
+  return radii(
+    corners.map(([x, y]) => `${x}px ${y}px`) as [string, string, string, string],
+    width(b),
+    height(b),
+  );
+}
+
+/** Closed outline of border box `b`. A corner under 1px is square. Clockwise, y downward. */
+export function roundedOutline(b: Rect, corners: Corners): string {
+  const [tl, tr, br, bl] = corners;
+  const { left: l, top: t, right: r, bottom: btm } = b;
+  const leg = (n: number) => (n >= 1 ? n : 0);
+  const turn = (rx: number, ry: number, x: number, y: number) => (rx >= 1 && ry >= 1 ? `A${rx} ${ry} 0 0 1 ${x} ${y}` : `L${x} ${y}`);
+  return `M${l + leg(tl[0])} ${t}H${r - leg(tr[0])}${turn(tr[0], tr[1], r, t + leg(tr[1]))}V${btm - leg(br[1])}${turn(br[0], br[1], r - leg(br[0]), btm)}H${l + leg(bl[0])}${turn(bl[0], bl[1], l, btm - leg(bl[1]))}V${t + leg(tl[1])}${turn(tl[0], tl[1], l + leg(tl[0]), t)}Z`;
 }
 
 /** How the subtree walk treats one node; dom.ts reads it from computed style. */

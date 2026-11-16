@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { rounded, type Corners } from '../core/blueprint';
+import { rounded, roundedOutline, type Corners } from '../core/blueprint';
 import { HINT_GAP, HINT_PAD_X, KEY_PAD_X, type PlacedHint } from '../core/hint';
 import { FONT_SIZE } from '../core/labels';
 import { mid, type Connector, type Segment } from '../core/measure';
@@ -40,7 +40,7 @@ const Label = ({ l }: { l: PlacedLabel }) => (
 const Bands = ({ part, rects, fill }: { part: 'padding' | 'margin'; rects: Rect[]; fill: string }) =>
   rects.map((r, i) => <rect key={i} x={r.left} y={r.top} width={width(r)} height={height(r)} fill={fill} data-band={part} />);
 
-type OutlineProps = { part: 'hover' | 'selected' | 'selection'; r: Rect; color: string; strokeWidth: number; dash?: string };
+type OutlineProps = { part: 'hover' | 'selection'; r: Rect; color: string; strokeWidth: number; dash?: string };
 const Outline = ({ part, r, color, strokeWidth, dash }: OutlineProps) => (
   <rect
     x={r.left}
@@ -55,6 +55,18 @@ const Outline = ({ part, r, color, strokeWidth, dash }: OutlineProps) => (
     data-outline={part}
   />
 );
+
+// the border box, so e2e can read x/y/width/height off a path the same way it reads them off a rect
+const boxAttrs = (r: Rect) => ({ x: r.left, y: r.top, width: width(r), height: height(r) });
+
+const SelectionOutline = ({ r, radii }: { r: Rect; radii: Corners }) => {
+  const paint = { fill: 'none' as const, stroke: theme.selection.outline, strokeWidth: theme.selection.outlineWidth, 'data-outline': 'selected' as const };
+  if (!radii.some(rounded)) return <rect {...boxAttrs(r)} {...paint} shapeRendering="crispEdges" />;
+  const [a, b, c, d] = radii;
+  const uniform = !!a && !!b && !!c && !!d && a[0] === b[0] && a[1] === b[1] && a[0] === c[0] && a[1] === c[1] && a[0] === d[0] && a[1] === d[1];
+  if (uniform) return <rect {...boxAttrs(r)} {...paint} rx={a[0]} ry={a[1]} />;
+  return <path d={roundedOutline(r, radii)} {...paint} {...boxAttrs(r)} />;
+};
 
 const StackingOutline = ({ part, r, dash }: { part: 'context' | 'clip' | 'participant'; r: Rect; dash?: string }) => (
   <rect
@@ -236,7 +248,7 @@ export function Overlay({ frame }: { frame: Frame }) {
             strokeWidth={measuring ? theme.measurement.targetWidth : theme.hover.outlineWidth}
           />
         )}
-        {selected.map((r, i) => <Outline key={i} part="selected" r={r} color={theme.selection.outline} strokeWidth={theme.selection.outlineWidth} />)}
+        {selected.map((s, i) => <SelectionOutline key={i} r={s.box} radii={s.radii} />)}
         {selection && selected.length > 1 && (
           <Outline part="selection" r={selection} color={theme.selection.bounds} strokeWidth={theme.selection.boundsWidth} dash={theme.selection.boundsDash} />
         )}
